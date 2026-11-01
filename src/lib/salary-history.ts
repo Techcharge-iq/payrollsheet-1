@@ -1,7 +1,7 @@
 export interface SalaryHistoryRecord {
   employee_id: number;
   hourly_rate: number;
-  effective_on: string | null;
+  effective_from: string | null;
   created_at?: string;
 }
 
@@ -12,13 +12,13 @@ export function effectiveRateOnDate(
   history: SalaryHistoryRecord[],
 ) {
   return history
-    .filter((record): record is SalaryHistoryRecord & { effective_on: string } =>
+    .filter((record): record is SalaryHistoryRecord & { effective_from: string } =>
       record.employee_id === employeeId &&
-      typeof record.effective_on === "string" &&
-      /^\d{4}-\d{2}-\d{2}$/.test(record.effective_on) &&
-      record.effective_on <= workDate,
+      typeof record.effective_from === "string" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(record.effective_from) &&
+      record.effective_from <= workDate,
     )
-    .sort((a, b) => b.effective_on.localeCompare(a.effective_on) ||
+    .sort((a, b) => b.effective_from.localeCompare(a.effective_from) ||
       (b.created_at ?? "").localeCompare(a.created_at ?? ""))[0]?.hourly_rate;
 }
 

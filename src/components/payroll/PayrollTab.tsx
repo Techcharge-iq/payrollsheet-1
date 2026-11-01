@@ -528,8 +528,8 @@ export function PayrollTab({
     > => {
       const { data, error } = await dbAny
         .from("employee_salary_history")
-        .select("employee_id, hourly_rate, effective_on, created_at")
-        .order("effective_on", { ascending: false })
+        .select("employee_id, hourly_rate, effective_from, created_at")
+        .order("effective_from", { ascending: false })
         .order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as SalaryHistoryRecord[];
