@@ -5,6 +5,19 @@ export interface SalaryHistoryRecord {
   created_at?: string;
 }
 
+/** Accept rows using either `effective_from` or legacy `effective_on`. */
+export function normalizeSalaryHistory(rows: Array<Record<string, unknown>>): SalaryHistoryRecord[] {
+  return rows.map((row) => {
+    const date = row["effective_from"] ?? row["effective_on"];
+    return {
+      employee_id: Number(row["employee_id"]),
+      hourly_rate: Number(row["hourly_rate"]),
+      effective_from: typeof date === "string" ? date.slice(0, 10) : null,
+      created_at: typeof row["created_at"] === "string" ? row["created_at"] : undefined,
+    };
+  });
+}
+
 /** Ignore undated legacy rows rather than inventing an effective salary date. */
 export function effectiveRateOnDate(
   employeeId: number,
