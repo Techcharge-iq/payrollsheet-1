@@ -147,9 +147,13 @@ async function callOpenRouterVision(file: File, employees: Array<{ id: number; n
 
 export async function uploadTimesheetImage(file: File) {
   const storageName = "timesheet-uploads";
-  const path = `daily/${makeSafeName(file)}`;
+  const { data: authData, error: authError } = await db.auth.getUser();
+  if (authError || !authData.user) {
+    throw new Error("Sign in again before uploading a timesheet image.");
+  }
+  const path = `${authData.user.id}/daily/${crypto.randomUUID()}-${makeSafeName(file)}`;
   const { error } = await db.storage.from(storageName).upload(path, file, {
-    upsert: true,
+    upsert: false,
     contentType: file.type || "image/jpeg",
   });
 
@@ -159,10 +163,13 @@ export async function uploadTimesheetImage(file: File) {
     );
   }
 
-  const { data } = db.storage.from(storageName).getPublicUrl(path);
+  const { data, error: linkError } = await db.storage.from(storageName).createSignedUrl(path, 3600);
+  if (linkError || !data) {
+    throw new Error(`Image uploaded, but could not open it: ${linkError?.message ?? "No image link returned"}`);
+  }
   return {
     storagePath: path,
-    publicUrl: data.publicUrl,
+    publicUrl: data.signedUrl,
   };
 }
 

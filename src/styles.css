@@ -950,14 +950,20 @@
 
   body:has(.attendance-report-print) #root,
   body:has(.attendance-report-print) main,
-  body:has(.attendance-report-print) .mobile-app-shell {
+  body:has(.attendance-report-print) .mobile-app-shell,
+  body:has(.attendance-report-print) .workstation-shell,
+  body:has(.attendance-report-print) .workstation-content {
     position: static !important;
     width: auto !important;
     min-width: 0 !important;
     max-width: none !important;
     height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
     overflow: visible !important;
     transform: none !important;
+    animation: none !important;
   }
 
   .attendance-report-matrix {

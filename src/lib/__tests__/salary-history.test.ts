@@ -14,7 +14,7 @@ describe("nullable salary-history effective dates", () => {
   });
   it("leaves the existing employee-rate fallback available when no date is known", () => {
     expect(effectiveRateOnDate(1, "2026-09-30", rows)).toBeUndefined();
-    expect(effectiveRateForMonth(1, "2026-10", [rows[0]])).toBeUndefined();
+    expect(effectiveRateForMonth(1, "2026-10", [{ employee_id: 1, hourly_rate: 50, effective_on: null }])).toBeUndefined();
   });
   it("preserves month selection and never takes another employee's rate", () => {
     expect(effectiveRateForMonth(1, "2026-10", rows)).toBe(12);
