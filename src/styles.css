@@ -906,6 +906,8 @@
     min-width: 0;
     margin: 0;
     background: var(--background);
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 
   body:has(.attendance-report-print) * {
@@ -983,7 +985,7 @@
     table-layout: fixed !important;
     border-collapse: collapse !important;
     border-spacing: 0 !important;
-    font-size: 7pt !important;
+    font-size: 11px !important;
   }
 
   .attendance-report-print thead {
@@ -1002,7 +1004,8 @@
     min-width: 0 !important;
     width: auto !important;
     max-width: none !important;
-    padding: 0.7mm 0.15mm !important;
+    padding: 4px 6px !important;
+    word-break: break-word;
     overflow-wrap: anywhere !important;
     text-align: center !important;
     color: var(--foreground) !important;
