@@ -50,7 +50,7 @@ async function readFileAsBase64(file: File) {
 }
 
 async function callOpenRouterVision(file: File, employees: Array<{ id: number; name: string }>) {
-  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
+  const apiKey = import.meta.env['VITE_OPENROUTER_API_KEY'];
   if (!apiKey) {
     return {
       records: employees.map((employee, index) => ({
@@ -126,15 +126,15 @@ async function callOpenRouterVision(file: File, employees: Array<{ id: number; n
   const parsed = typeof parsedContent === "string" ? JSON.parse(parsedContent) : parsedContent;
   const records = Array.isArray(parsed?.records)
     ? parsed.records.map((record: Record<string, unknown>) => ({
-        employeeId: Number(record.employeeId ?? record.id ?? 0),
-        employeeName: typeof record.employeeName === "string" ? record.employeeName : undefined,
-        status: (record.status as VisionStatus) || "PRESENT",
-        inTime: typeof record.inTime === "string" ? record.inTime : undefined,
-        outTime: typeof record.outTime === "string" ? record.outTime : undefined,
-        breakHours: typeof record.breakHours === "number" ? record.breakHours : undefined,
-        regularHours: typeof record.regularHours === "number" ? record.regularHours : undefined,
-        overtimeHours: typeof record.overtimeHours === "number" ? record.overtimeHours : undefined,
-        remarks: typeof record.remarks === "string" ? record.remarks : undefined,
+        employeeId: Number(record['employeeId'] ?? record['id'] ?? 0),
+        employeeName: typeof record['employeeName'] === "string" ? record['employeeName'] : undefined,
+        status: (record['status'] as VisionStatus) || "PRESENT",
+        inTime: typeof record['inTime'] === "string" ? record['inTime'] : undefined,
+        outTime: typeof record['outTime'] === "string" ? record['outTime'] : undefined,
+        breakHours: typeof record['breakHours'] === "number" ? record['breakHours'] : undefined,
+        regularHours: typeof record['regularHours'] === "number" ? record['regularHours'] : undefined,
+        overtimeHours: typeof record['overtimeHours'] === "number" ? record['overtimeHours'] : undefined,
+        remarks: typeof record['remarks'] === "string" ? record['remarks'] : undefined,
       }))
     : [];
 
@@ -147,9 +147,13 @@ async function callOpenRouterVision(file: File, employees: Array<{ id: number; n
 
 export async function uploadTimesheetImage(file: File) {
   const storageName = "timesheet-uploads";
-  const path = `daily/${makeSafeName(file)}`;
+  const { data: authData, error: authError } = await db.auth.getUser();
+  if (authError || !authData.user) {
+    throw new Error("Sign in again before uploading a timesheet image.");
+  }
+  const path = `${authData.user.id}/daily/${crypto.randomUUID()}-${makeSafeName(file)}`;
   const { error } = await db.storage.from(storageName).upload(path, file, {
-    upsert: true,
+    upsert: false,
     contentType: file.type || "image/jpeg",
   });
 
@@ -159,10 +163,13 @@ export async function uploadTimesheetImage(file: File) {
     );
   }
 
-  const { data } = db.storage.from(storageName).getPublicUrl(path);
+  const { data, error: linkError } = await db.storage.from(storageName).createSignedUrl(path, 3600);
+  if (linkError || !data) {
+    throw new Error(`Image uploaded, but could not open it: ${linkError?.message ?? "No image link returned"}`);
+  }
   return {
     storagePath: path,
-    publicUrl: data.publicUrl,
+    publicUrl: data.signedUrl,
   };
 }
 
@@ -187,7 +194,7 @@ export async function extractAttendanceFromImage(
     const parsed = await callOpenRouterVision(file, employees);
     const records = parsed.records.length
       ? parsed.records
-      : employees.map((employee) => ({
+      : employees.map((employee): VisionDraftRecord => ({
           employeeId: employee.id,
           employeeName: employee.name,
           status: "PRESENT",
@@ -207,7 +214,7 @@ export async function extractAttendanceFromImage(
       note: parsed.note,
     };
   } catch (error) {
-    const fallbackRecords = employees.map((employee) => ({
+    const fallbackRecords = employees.map((employee): VisionDraftRecord => ({
       employeeId: employee.id,
       employeeName: employee.name,
       status: "PRESENT",
