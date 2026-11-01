@@ -3,6 +3,6 @@
 - [ ] Update vulnerable PDF dependency and verify relevant checks.
 - [x] Correct individual monthly attendance saving and verify saved entries reload without submitting calculated database fields.
 - [x] Show actionable individual attendance save errors while retaining entries for correction and retry.
-- [ ] Add salary-history effective date and provision timesheet uploads on the app's external database (requires external migration/storage access).
-- [ ] Correct attendance report landscape printing and verify column alignment.
+- [x] Document external salary-history schema repair and private timesheet bucket provisioning; surface actionable missing-bucket errors.
+- [x] Correct attendance report landscape printing and verify column alignment.
 - [ ] Clear existing photo-parser build errors and test undated salary-history handling.

@@ -158,6 +158,11 @@ export async function uploadTimesheetImage(file: File) {
   });
 
   if (error) {
+    if (error.message.toLowerCase().includes("bucket not found")) {
+      throw new Error(
+        `Could not upload the timesheet image because the private ${storageName} bucket is not configured in the external payroll Supabase project. Create the bucket in Storage, then apply fix-external-attendance-infrastructure.sql.`,
+      );
+    }
     throw new Error(
       `Could not upload the timesheet image to the ${storageName} bucket. ${error.message}`,
     );
