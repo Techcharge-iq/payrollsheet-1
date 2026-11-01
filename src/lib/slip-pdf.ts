@@ -300,12 +300,31 @@ function drawSlip(doc: jsPDF, slip: SlipInput, headerImage: HeaderImage) {
   doc.setFontSize(9);
   doc.text("PAYMENT DETAILS", left + 5, detailsY + 7);
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(8.5);
   doc.setTextColor(...MUTED);
-  doc.text(`Paid this month: ${money(toNum(row.paid))}`, left + 5, detailsY + 15);
-  doc.text(`Remaining salary balance: ${money(balance)}`, left + 95, detailsY + 15);
-  doc.text(`Advance brought forward: ${money(slip.carriedForward)}`, left + 5, detailsY + 21);
-  doc.text(`New advance issued: ${money(toNum(row.new_advance))}`, left + 95, detailsY + 21);
+  const paymentDetail = (text: string, x: number, y: number, align: "left" | "right") => {
+    const width = 80;
+    fitFontSize(doc, text, width, 8.5, 6.25);
+    doc.text(text, x, y, { align });
+  };
+  paymentDetail(`Paid this month: ${money(toNum(row.paid))}`, left + 5, detailsY + 15, "left");
+  paymentDetail(
+    `Remaining salary balance: ${money(balance)}`,
+    left + contentWidth - 5,
+    detailsY + 15,
+    "right",
+  );
+  paymentDetail(
+    `Advance brought forward: ${money(slip.carriedForward)}`,
+    left + 5,
+    detailsY + 21,
+    "left",
+  );
+  paymentDetail(
+    `New advance issued: ${money(toNum(row.new_advance))}`,
+    left + contentWidth - 5,
+    detailsY + 21,
+    "right",
+  );
 
   doc.setDrawColor(150, 156, 163);
   doc.setLineWidth(0.35);

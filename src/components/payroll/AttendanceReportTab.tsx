@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
-import { CalendarDays, Clock3, MapPin, Users } from "lucide-react";
+import { CalendarDays, Clock3, MapPin, Printer, Users } from "lucide-react";
 import type { Employee } from "@/lib/payroll";
 import { useTimesheetsForMonth, type TimesheetRecord } from "@/lib/payroll-data";
 import { currentPayrollMonth, fmt, monthLabel, payrollMonthOptions } from "@/lib/payroll";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { card, select } from "./ui";
+import { btnOutline, card, select } from "./ui";
 
 interface Props {
   employees: Employee[];
@@ -33,7 +33,7 @@ function AttendanceMatrix({
   site?: string | undefined;
 }) {
   return (
-    <div className={card + " overflow-hidden"}>
+    <div className={card + " attendance-report-matrix overflow-hidden"}>
       <div className="border-b border-border px-4 py-3">
         <h3 className="font-bold text-navy">{title}</h3>
         <p className="text-xs text-muted-foreground">{description}</p>
@@ -288,8 +288,8 @@ export function AttendanceReportTab({ employees }: Props) {
     );
 
   return (
-    <section className="space-y-4">
-      <header className={card + " flex items-center gap-3 p-4"}>
+    <section className="attendance-report-print space-y-4">
+      <header className={card + " no-print flex items-center gap-3 p-4"}>
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-navy-soft text-navy">
           <CalendarDays size={20} />
         </div>
@@ -299,9 +299,17 @@ export function AttendanceReportTab({ employees }: Props) {
             Review monthly hours by employee or work site.
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => window.print()}
+          className={`no-print ml-auto ${btnOutline}`}
+        >
+          <Printer size={16} />
+          Print Report
+        </button>
       </header>
 
-      <div className={card + " space-y-4 p-4"}>
+      <div className={card + " no-print space-y-4 p-4"}>
         <div className="flex flex-wrap gap-2" role="group" aria-label="Report filter">
           <button
             type="button"
@@ -336,7 +344,7 @@ export function AttendanceReportTab({ employees }: Props) {
                 <option value="">Select employee…</option>
                 {employees.map((employee) => (
                   <option key={employee.id} value={employee.id}>
-                    {employee.name} — {employee.trade}
+                    {employee.name} — ID {employee.id_number || employee.id} — {employee.trade}
                   </option>
                 ))}
               </select>
@@ -391,6 +399,9 @@ export function AttendanceReportTab({ employees }: Props) {
           </div>
         ) : (
           <>
+            <h2 className="attendance-report-print-only">
+              Attendance Report · {selectedEmployee.name} · {monthLabel(month)}
+            </h2>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {[
                 { label: "Employee", value: selectedEmployee.name, icon: Users },
@@ -432,6 +443,9 @@ export function AttendanceReportTab({ employees }: Props) {
         </div>
       ) : (
         <>
+          <h2 className="attendance-report-print-only">
+            Attendance Report · {site} · {monthLabel(month)}
+          </h2>
           <div className="grid grid-cols-3 gap-3">
             {[
               { label: "Workers", value: siteRows.length, icon: Users },

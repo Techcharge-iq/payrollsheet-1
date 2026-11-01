@@ -86,10 +86,17 @@ export function SlipsTab({ employees, batches, advances, notify }: Props) {
       );
     });
   }, [batches, month, empById, sortKey, sortDirection]);
-  const visibleRows = useMemo(
-    () => rows.filter((row) => row.employee.name.toLowerCase().includes(search.toLowerCase())),
-    [rows, search],
-  );
+  const visibleRows = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return rows.filter(
+      ({ employee }) =>
+        employee.name.toLowerCase().includes(query) ||
+        String(employee.id_number ?? "")
+          .toLowerCase()
+          .includes(query) ||
+        String(employee.id).includes(query),
+    );
+  }, [rows, search]);
 
   const sortBy = (key: SortKey) => {
     if (sortKey === key) {

@@ -71,7 +71,7 @@ export function HistoryTab({ employees, batches, advances }: Props) {
             <option value="">Select an employee…</option>
             {employees.map((e) => (
               <option key={e.id} value={e.id}>
-                {e.name} — {e.trade}
+                {e.name} — ID {e.id_number || e.id} — {e.trade}
               </option>
             ))}
           </select>

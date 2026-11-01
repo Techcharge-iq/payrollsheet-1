@@ -439,6 +439,7 @@ export function MonthlyAttendanceDialog({
       (e) =>
         e.name.toLowerCase().includes(q) ||
         (e.id_number && e.id_number.toLowerCase().includes(q)) ||
+        String(e.id).includes(q) ||
         (e.trade && e.trade.toLowerCase().includes(q)),
     );
   }, [empSearch, employeesByName]);
@@ -450,6 +451,7 @@ export function MonthlyAttendanceDialog({
       (e) =>
         e.name.toLowerCase().includes(q) ||
         (e.id_number && e.id_number.toLowerCase().includes(q)) ||
+        String(e.id).includes(q) ||
         (e.trade && e.trade.toLowerCase().includes(q)),
     );
   }, [employeeSearch, employeesByName]);

@@ -187,7 +187,10 @@ function EmployeeSearchSelect({ employees, locked, value, onPick }: EmployeeSear
     return (
       <div className="flex min-w-47.5 items-center justify-between gap-1 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs">
         <span className="font-semibold text-navy">
-          {selected.name} <span className="font-normal text-slate-400">— {selected.trade}</span>
+          {selected.name}{" "}
+          <span className="font-normal text-slate-400">
+            — ID {selected.id_number || selected.id} · {selected.trade}
+          </span>
         </span>
         <button
           ref={selectedButtonRef}
@@ -242,7 +245,10 @@ function EmployeeSearchSelect({ employees, locked, value, onPick }: EmployeeSear
               aria-selected={selectableResults[highlightedIndex]?.id === e.id}
             >
               <span className="font-semibold text-navy">
-                {e.name} <span className="font-normal text-slate-400">— {e.trade}</span>
+                {e.name}{" "}
+                <span className="font-normal text-slate-400">
+                  — ID {e.id_number || e.id} · {e.trade}
+                </span>
               </span>
               {isLocked && (
                 <span className="flex items-center gap-1 text-[10px] font-bold uppercase text-warn">

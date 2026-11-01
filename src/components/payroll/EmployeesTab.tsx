@@ -38,7 +38,8 @@ export function EmployeesTab({ employees, loading, onNew, onView, onEdit }: Prop
             e.name.toLowerCase().includes(q) ||
             String(e.id_number ?? "")
               .toLowerCase()
-              .includes(q)
+              .includes(q) ||
+            String(e.id).includes(q)
           );
         }),
     [employees, search, tradeFilter, statusFilter],
@@ -78,7 +79,7 @@ export function EmployeesTab({ employees, loading, onNew, onView, onEdit }: Prop
             <option value="">Select employee…</option>
             {employees.map((e) => (
               <option key={e.id} value={e.id}>
-                {e.name} — {e.trade}
+                {e.name} — ID {e.id_number || e.id} — {e.trade}
               </option>
             ))}
           </select>

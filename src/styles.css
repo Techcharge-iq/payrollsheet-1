@@ -889,3 +889,121 @@
     display: contents;
   }
 }
+
+.attendance-report-print-only {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
+
+  html,
+  body {
+    width: 194mm;
+    min-width: 0;
+    margin: 0;
+    background: white;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .attendance-report-print,
+  .attendance-report-print * {
+    visibility: visible !important;
+  }
+
+  .attendance-report-print {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    display: block !important;
+    width: 194mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    color: #111 !important;
+    background: white !important;
+    font-family: var(--font-body) !important;
+    font-size: 8pt !important;
+  }
+
+  .attendance-report-print .no-print {
+    display: none !important;
+  }
+
+  .attendance-report-print .attendance-report-print-only {
+    display: block !important;
+    margin: 0 0 4mm !important;
+    font-size: 12pt !important;
+    font-weight: 700 !important;
+  }
+
+  .attendance-report-print [class*="overflow"] {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
+  .attendance-report-print table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+    border-spacing: 0 !important;
+    font-size: 5.5pt !important;
+  }
+
+  .attendance-report-print thead {
+    display: table-header-group !important;
+    position: static !important;
+  }
+
+  .attendance-report-print tr {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  .attendance-report-print th,
+  .attendance-report-print td {
+    position: static !important;
+    min-width: 0 !important;
+    width: 4.3mm !important;
+    max-width: 4.3mm !important;
+    padding: 0.7mm 0.15mm !important;
+    overflow-wrap: anywhere !important;
+    text-align: center !important;
+    color: #111 !important;
+    background: white !important;
+    border: 0.15mm solid #999 !important;
+  }
+
+  .attendance-report-print th:first-child,
+  .attendance-report-print tbody th:first-child {
+    width: 26mm !important;
+    max-width: 26mm !important;
+    text-align: left !important;
+  }
+
+  .attendance-report-print th:nth-child(2),
+  .attendance-report-print td:nth-child(2) {
+    width: 12mm !important;
+    max-width: 12mm !important;
+    text-align: left !important;
+  }
+
+  .attendance-report-print th:last-child,
+  .attendance-report-print td:last-child {
+    width: 20mm !important;
+    max-width: 20mm !important;
+    text-align: right !important;
+    font-variant-numeric: tabular-nums !important;
+  }
+
+  .attendance-report-print .app-card:not(.attendance-report-matrix) {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

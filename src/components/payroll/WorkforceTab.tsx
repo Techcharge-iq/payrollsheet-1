@@ -381,7 +381,8 @@ export function WorkforceTab({
             employee.trade.toLowerCase().includes(query) ||
             String(employee.id_number ?? "")
               .toLowerCase()
-              .includes(query)
+              .includes(query) ||
+            String(employee.id).includes(query)
           );
         })
         .sort((a, b) => a.name.localeCompare(b.name)),
@@ -443,7 +444,7 @@ export function WorkforceTab({
             <option value="">Select employee</option>
             {employees.map((e) => (
               <option key={e.id} value={e.id}>
-                {e.name} · {e.trade}
+                {e.name} · ID {e.id_number || e.id} · {e.trade}
               </option>
             ))}
           </select>
@@ -527,7 +528,7 @@ export function WorkforceTab({
             <option value="">Select employee</option>
             {employees.map((e) => (
               <option key={e.id} value={e.id}>
-                {e.name} · {e.id_number || e.trade}
+                {e.name} · ID {e.id_number || e.id} · {e.trade}
               </option>
             ))}
           </select>
@@ -709,7 +710,7 @@ export function WorkforceTab({
                           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
                             {employee.name}
                             <span className="ml-2 font-normal text-muted-foreground">
-                              {employee.trade}
+                              ID {employee.id_number || employee.id} · {employee.trade}
                             </span>
                           </span>
                           <span className="text-right text-xs text-muted-foreground">
@@ -835,7 +836,7 @@ export function WorkforceTab({
             <option value="">Select employee</option>
             {employees.map((e) => (
               <option key={e.id} value={e.id}>
-                {e.name}
+                {e.name} · ID {e.id_number || e.id}
               </option>
             ))}
           </select>

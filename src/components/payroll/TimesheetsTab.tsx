@@ -21,6 +21,8 @@ import { dbAny } from "@/integrations/supabase/external-client";
 import { useTimesheetsForDate, type TimesheetRecord } from "@/lib/payroll-data";
 import { useProjects, type Project } from "@/lib/management-data";
 import { projectAccessError } from "@/lib/project-access";
+import { AttendanceView } from "@/components/attendance/AttendanceView";
+import type { VisionDraftRecord } from "@/utils/visionParser";
 import { MonthlyAttendanceDialog } from "./MonthlyAttendanceDialog";
 import { TimeControl } from "./TimeControl";
 import { btnGold, btnOutline, card, input, select } from "./ui";
@@ -429,6 +431,7 @@ export function TimesheetsTab({
   const [attendanceStatusFilter, setAttendanceStatusFilter] = useState<AttendanceStatus | "">("");
   const [copyPickerOpen, setCopyPickerOpen] = useState(false);
   const [monthlyAttendanceOpen, setMonthlyAttendanceOpen] = useState(false);
+  const [attendanceMode, setAttendanceMode] = useState<"manual" | "photo">("manual");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [bulkInTime, setBulkInTime] = useState("06:00");
   const [bulkOutTime, setBulkOutTime] = useState("17:00");
@@ -977,6 +980,85 @@ export function TimesheetsTab({
     );
   };
 
+  const applyVisionDraft = (rows: VisionDraftRecord[]) => {
+    if (!rows.length) return;
+    setSelectedIds((current) =>
+      Array.from(new Set([...current, ...rows.map((row) => row.employeeId).filter((id) => employeeById.has(id))])),
+    );
+    setAttendance((current) => {
+      const merged = { ...current };
+      for (const row of rows) {
+        const employee = employeeById.get(row.employeeId);
+        if (!employee) continue;
+        const defaultDraft = merged[row.employeeId] ?? defaultAttendance();
+        const status = row.status || defaultDraft.status || "PRESENT";
+        const isWorked = worked(status as AttendanceStatus);
+        const nextInTime = row.inTime ?? defaultDraft.inTime ?? "06:00";
+        const nextOutTime = row.outTime ?? defaultDraft.outTime ?? "17:00";
+        const nextBreakHours = row.breakHours ?? (Number(defaultDraft.breakHours) || 0);
+        const nextManualHours =
+          row.regularHours ?? (Number(defaultDraft.manualHours) || (defaultDraft.inTime ? 8 : 0));
+        merged[row.employeeId] = {
+          ...defaultDraft,
+          status,
+          inTime: isWorked ? nextInTime : "",
+          outTime: isWorked ? nextOutTime : "",
+          breakHours: String(nextBreakHours),
+          manualHours: String(nextManualHours),
+          notes: row.remarks ?? defaultDraft.notes,
+        };
+      }
+      return merged;
+    });
+    setDirty(true);
+    setAttendanceMode("manual");
+  };
+
+  const saveVisionDraft = async (rows: VisionDraftRecord[]) => {
+    const cleanSite = site.trim();
+    const cleanForeman = foreman.trim();
+    if (!cleanSite || !cleanForeman) {
+      throw new Error("Enter both a site and a foreman before saving extracted attendance.");
+    }
+    const projectId =
+      selectedProjectId ?? projects.find((project) => project.name === cleanSite)?.id ?? null;
+    if (!projectId) {
+      throw new Error("Choose an existing project before saving extracted attendance.");
+    }
+    if (role === "foreman" && selectedForemanId !== currentUserId) {
+      throw new Error("Foremen can only record attendance under their own account.");
+    }
+    const payload = rows
+      .filter((row) => employeeById.has(row.employeeId))
+      .map((row) => {
+        const status = row.status || "PRESENT";
+        const doesWork = worked(status as AttendanceStatus);
+        return {
+          employee_id: row.employeeId,
+          site: cleanSite,
+          foreman: cleanForeman,
+          project_id: projectId,
+          foreman_user_id: selectedForemanId,
+          work_date: workDate,
+          status,
+          in_time: doesWork ? row.inTime ?? "06:00" : null,
+          out_time: doesWork ? row.outTime ?? "17:00" : null,
+          break_hours: doesWork ? Number(row.breakHours ?? 0) : 0,
+          overtime_hours: Number(row.overtimeHours ?? 0),
+          remarks: row.remarks?.trim() || null,
+        } satisfies Omit<TimesheetRecord, "id" | "created_at" | "total_hours" | "regular_hours">;
+      });
+
+    if (!payload.length) {
+      throw new Error("No valid workers were found in the extracted attendance draft.");
+    }
+
+    await onSave(payload);
+    resetForm();
+    setAttendanceMode("manual");
+    notify(`${payload.length} employee attendance record(s) saved from the photo scan.`, "ok");
+  };
+
   const selectProject = (project: Project) => {
     if (dirty && !confirmDiscard()) return;
 
@@ -1410,6 +1492,40 @@ export function TimesheetsTab({
                 </div>
               )}
             </header>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1">
+                {[
+                  { value: "manual", label: "Manual Entry" },
+                  { value: "photo", label: "AI Photo Scan" },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setAttendanceMode(option.value as "manual" | "photo")}
+                    className={`rounded-md px-3 py-1.5 text-[11px] font-semibold transition ${attendanceMode === option.value
+                        ? "bg-navy text-white shadow-sm"
+                        : "text-slate-600 hover:text-navy"
+                      }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                Keep the current manual workflow intact
+              </span>
+            </div>
+            {attendanceMode === "photo" && (
+              <AttendanceView
+                employees={employees}
+                site={site}
+                foreman={foreman}
+                workDate={workDate}
+                onApplyDraft={applyVisionDraft}
+                onSaveDraft={saveVisionDraft}
+                notify={notify}
+              />
+            )}
             <div className={`${card} attendance-batch-toolbar attendance-scroll-reveal`}>
               {role !== "foreman" && (
                 <>

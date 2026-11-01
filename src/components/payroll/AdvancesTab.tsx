@@ -201,7 +201,7 @@ export function AdvancesTab({
             <option value="">All employees</option>
             {employees.map((e) => (
               <option key={e.id} value={e.id}>
-                {e.name} — {e.trade}
+                {e.name} — ID {e.id_number || e.id} — {e.trade}
               </option>
             ))}
           </select>
@@ -276,7 +276,7 @@ export function AdvancesTab({
                 <option value="">Select employee…</option>
                 {employees.map((e) => (
                   <option key={e.id} value={e.id}>
-                    {e.name} — {e.trade}
+                    {e.name} — ID {e.id_number || e.id} — {e.trade}
                   </option>
                 ))}
               </select>
