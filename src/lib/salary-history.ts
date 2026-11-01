@@ -2,7 +2,7 @@ export interface SalaryHistoryRecord {
   employee_id: number;
   hourly_rate: number;
   effective_from: string | null;
-  created_at?: string;
+  created_at?: string | undefined;
 }
 
 /** Accept rows using either `effective_from` or legacy `effective_on`. */
