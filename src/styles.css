@@ -896,19 +896,19 @@
 
 @media print {
   @page {
-    size: A4 portrait;
-    margin: 8mm;
+    size: landscape;
+    margin: 10mm;
   }
 
   html,
   body {
-    width: 194mm;
+    width: auto;
     min-width: 0;
     margin: 0;
-    background: white;
+    background: var(--background);
   }
 
-  body * {
+  body:has(.attendance-report-print) * {
     visibility: hidden !important;
   }
 
@@ -921,17 +921,17 @@
     position: absolute !important;
     inset: 0 auto auto 0 !important;
     display: block !important;
-    width: 194mm !important;
+    width: 100% !important;
     margin: 0 !important;
     padding: 0 !important;
     overflow: visible !important;
-    color: #111 !important;
-    background: white !important;
+    color: var(--foreground) !important;
+    background: var(--background) !important;
     font-family: var(--font-body) !important;
     font-size: 8pt !important;
   }
 
-  .attendance-report-print .no-print {
+  .no-print {
     display: none !important;
   }
 
@@ -945,6 +945,30 @@
   .attendance-report-print [class*="overflow"] {
     overflow: visible !important;
     max-height: none !important;
+    height: auto !important;
+  }
+
+  body:has(.attendance-report-print) #root,
+  body:has(.attendance-report-print) main,
+  body:has(.attendance-report-print) .mobile-app-shell {
+    position: static !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    transform: none !important;
+  }
+
+  .attendance-report-matrix {
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+
+  .attendance-report-matrix > div:first-child {
+    break-after: avoid !important;
+    page-break-after: avoid !important;
   }
 
   .attendance-report-print table {
@@ -953,7 +977,7 @@
     table-layout: fixed !important;
     border-collapse: collapse !important;
     border-spacing: 0 !important;
-    font-size: 5.5pt !important;
+    font-size: 7pt !important;
   }
 
   .attendance-report-print thead {
@@ -970,20 +994,20 @@
   .attendance-report-print td {
     position: static !important;
     min-width: 0 !important;
-    width: 4.3mm !important;
-    max-width: 4.3mm !important;
+    width: auto !important;
+    max-width: none !important;
     padding: 0.7mm 0.15mm !important;
     overflow-wrap: anywhere !important;
     text-align: center !important;
-    color: #111 !important;
-    background: white !important;
-    border: 0.15mm solid #999 !important;
+    color: var(--foreground) !important;
+    background: var(--background) !important;
+    border: 0.15mm solid var(--muted-foreground) !important;
   }
 
   .attendance-report-print th:first-child,
   .attendance-report-print tbody th:first-child {
-    width: 26mm !important;
-    max-width: 26mm !important;
+    width: 40mm !important;
+    max-width: 40mm !important;
     text-align: left !important;
   }
 
@@ -996,8 +1020,8 @@
 
   .attendance-report-print th:last-child,
   .attendance-report-print td:last-child {
-    width: 20mm !important;
-    max-width: 20mm !important;
+    width: 17mm !important;
+    max-width: 17mm !important;
     text-align: right !important;
     font-variant-numeric: tabular-nums !important;
   }
@@ -1005,5 +1029,14 @@
   .attendance-report-print .app-card:not(.attendance-report-matrix) {
     break-inside: avoid;
     page-break-inside: avoid;
+  }
+
+  .attendance-report-print td span {
+    min-width: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    font-size: inherit !important;
+    background: transparent !important;
+    color: inherit !important;
   }
 }

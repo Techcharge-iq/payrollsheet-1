@@ -50,7 +50,7 @@ async function readFileAsBase64(file: File) {
 }
 
 async function callOpenRouterVision(file: File, employees: Array<{ id: number; name: string }>) {
-  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
+  const apiKey = import.meta.env['VITE_OPENROUTER_API_KEY'];
   if (!apiKey) {
     return {
       records: employees.map((employee, index) => ({
@@ -126,15 +126,15 @@ async function callOpenRouterVision(file: File, employees: Array<{ id: number; n
   const parsed = typeof parsedContent === "string" ? JSON.parse(parsedContent) : parsedContent;
   const records = Array.isArray(parsed?.records)
     ? parsed.records.map((record: Record<string, unknown>) => ({
-        employeeId: Number(record.employeeId ?? record.id ?? 0),
-        employeeName: typeof record.employeeName === "string" ? record.employeeName : undefined,
-        status: (record.status as VisionStatus) || "PRESENT",
-        inTime: typeof record.inTime === "string" ? record.inTime : undefined,
-        outTime: typeof record.outTime === "string" ? record.outTime : undefined,
-        breakHours: typeof record.breakHours === "number" ? record.breakHours : undefined,
-        regularHours: typeof record.regularHours === "number" ? record.regularHours : undefined,
-        overtimeHours: typeof record.overtimeHours === "number" ? record.overtimeHours : undefined,
-        remarks: typeof record.remarks === "string" ? record.remarks : undefined,
+        employeeId: Number(record['employeeId'] ?? record['id'] ?? 0),
+        employeeName: typeof record['employeeName'] === "string" ? record['employeeName'] : undefined,
+        status: (record['status'] as VisionStatus) || "PRESENT",
+        inTime: typeof record['inTime'] === "string" ? record['inTime'] : undefined,
+        outTime: typeof record['outTime'] === "string" ? record['outTime'] : undefined,
+        breakHours: typeof record['breakHours'] === "number" ? record['breakHours'] : undefined,
+        regularHours: typeof record['regularHours'] === "number" ? record['regularHours'] : undefined,
+        overtimeHours: typeof record['overtimeHours'] === "number" ? record['overtimeHours'] : undefined,
+        remarks: typeof record['remarks'] === "string" ? record['remarks'] : undefined,
       }))
     : [];
 
@@ -187,7 +187,7 @@ export async function extractAttendanceFromImage(
     const parsed = await callOpenRouterVision(file, employees);
     const records = parsed.records.length
       ? parsed.records
-      : employees.map((employee) => ({
+      : employees.map((employee): VisionDraftRecord => ({
           employeeId: employee.id,
           employeeName: employee.name,
           status: "PRESENT",
@@ -207,7 +207,7 @@ export async function extractAttendanceFromImage(
       note: parsed.note,
     };
   } catch (error) {
-    const fallbackRecords = employees.map((employee) => ({
+    const fallbackRecords = employees.map((employee): VisionDraftRecord => ({
       employeeId: employee.id,
       employeeName: employee.name,
       status: "PRESENT",
