@@ -8,7 +8,7 @@ export interface DiagnosticCheck {
   label: string;
   ok: boolean;
   detail: string;
-  fix?: string;
+  fix?: string | undefined;
 }
 
 const REQUIRED: Record<string, string[]> = {
