@@ -584,7 +584,7 @@ function Dashboard({
     <div className="workstation-shell min-h-screen bg-canvas font-sans text-foreground">
       <nav
         id="application-menu"
-        className={`floating-menu ${mobileMenuOpen ? "is-open" : ""}`}
+        className={`no-print floating-menu ${mobileMenuOpen ? "is-open" : ""}`}
         aria-label="Application menu"
       >
         <button

@@ -60,6 +60,7 @@ import {
 import { btnGold, btnIcon, btnOutline, btnPrimary, card, input, inputSm, select } from "./ui";
 import { NewAdvanceValue } from "./NewAdvanceValue";
 import { dbAny } from "@/integrations/supabase/external-client";
+import { effectiveRateForMonth, effectiveRateOnDate, type SalaryHistoryRecord } from "@/lib/salary-history";
 
 interface Props {
   employees: Employee[];
@@ -339,46 +340,6 @@ function empIdLabel(employees: Employee[], id: number | "") {
   return e?.id_number?.trim() ? e.id_number.trim() : "Not Assigned";
 }
 
-function effectiveRateForMonth(
-  employeeId: number,
-  month: string,
-  salaryHistory: Array<{
-    employee_id: number;
-    hourly_rate: number;
-    effective_on: string;
-    created_at?: string;
-  }>,
-) {
-  return salaryHistory
-    .filter(
-      (record) => record.employee_id === employeeId && record.effective_on.slice(0, 7) <= month,
-    )
-    .sort(
-      (a, b) =>
-        b.effective_on.localeCompare(a.effective_on) ||
-        (b.created_at ?? "").localeCompare(a.created_at ?? ""),
-    )[0]?.hourly_rate;
-}
-
-function effectiveRateOnDate(
-  employeeId: number,
-  workDate: string,
-  salaryHistory: Array<{
-    employee_id: number;
-    hourly_rate: number;
-    effective_on: string;
-    created_at?: string;
-  }>,
-) {
-  return salaryHistory
-    .filter((record) => record.employee_id === employeeId && record.effective_on <= workDate)
-    .sort(
-      (a, b) =>
-        b.effective_on.localeCompare(a.effective_on) ||
-        (b.created_at ?? "").localeCompare(a.created_at ?? ""),
-    )[0]?.hourly_rate;
-}
-
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof Error) return error.message;
   if (
@@ -563,7 +524,7 @@ export function PayrollTab({
   const salaryHistoryQuery = useQuery({
     queryKey: ["employee_salary_history"],
     queryFn: async (): Promise<
-      Array<{ employee_id: number; hourly_rate: number; effective_on: string; created_at: string }>
+      SalaryHistoryRecord[]
     > => {
       const { data, error } = await dbAny
         .from("employee_salary_history")
@@ -571,12 +532,7 @@ export function PayrollTab({
         .order("effective_on", { ascending: false })
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return (data ?? []) as Array<{
-        employee_id: number;
-        hourly_rate: number;
-        effective_on: string;
-        created_at: string;
-      }>;
+      return (data ?? []) as SalaryHistoryRecord[];
     },
   });
   const salaryHistory = salaryHistoryQuery.data ?? [];
