@@ -43,6 +43,16 @@ function fitFontSize(doc: jsPDF, text: string, maxWidth: number, preferred: numb
   return minimum;
 }
 
+function fitText(doc: jsPDF, text: string, maxWidth: number, preferred: number, minimum = 6): string {
+  fitFontSize(doc, text, maxWidth, preferred, minimum);
+  if (doc.getTextWidth(text) <= maxWidth) return text;
+  let truncated = text;
+  while (truncated.length > 0 && doc.getTextWidth(truncated + "…") > maxWidth) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated.length > 0 ? truncated + "…" : text;
+}
+
 let headerImagePromise: Promise<HeaderImage> | undefined;
 
 function loadHeaderImage() {
@@ -103,14 +113,14 @@ function drawCard(
   rows: Array<{ label: string; value: string; emphasis?: boolean }>,
   total: { label: string; value: string },
 ) {
-  const height = 77;
+  const height = 78;
   const headerHeight = 12;
-  const panelInset = 3.5;
-  const columnGap = 3.5;
-  const valueBoxWidth = Math.min(28.5, Math.max(27.5, width * 0.52));
-  const valueBoxHeight = 7.6;
-  const rowStart = y + 23.5;
-  const rowStep = 13.5;
+  const panelInset = 3;
+  const columnGap = 2.5;
+  const valueBoxWidth = 25;
+  const valueBoxHeight = 7.2;
+  const rowStart = y + 21.0;
+  const rowStep = 13.4;
   const totalRowY = y + height - 5.8;
 
   doc.setFillColor(249, 250, 251);
@@ -145,17 +155,17 @@ function drawCard(
     labelLines = doc.splitTextToSize(label, labelWidth);
     doc.setTextColor(...INK);
     const labelLineHeight = 3.1;
-    const firstLabelLineY = rowY - ((labelLines.length - 1) * labelLineHeight) / 2;
+    const firstLabelLineY = rowY - 0.5 - ((labelLines.length - 1) * labelLineHeight) / 2;
     doc.text(labelLines, innerLeft, firstLabelLineY, { lineHeightFactor: 1 });
 
     doc.setFillColor(255, 255, 255);
     doc.setDrawColor(...color);
     doc.setLineWidth(0.35);
-    doc.roundedRect(valueLeft, rowY - 5.35, valueBoxWidth, valueBoxHeight, 1.35, 1.35, "FD");
+    doc.roundedRect(valueLeft, rowY - 5.1, valueBoxWidth, valueBoxHeight, 1.35, 1.35, "FD");
     doc.setFont("helvetica", emphasis ? "bold" : "normal");
-    fitFontSize(doc, value || "—", valueBoxWidth - 5, emphasis ? 8.25 : 8, 6.25);
+    fitFontSize(doc, value || "—", valueBoxWidth - 4, emphasis ? 8.25 : 8, 6.25);
     doc.setTextColor(...INK);
-    doc.text(value || "—", valueRight - 2.25, rowY, { align: "right" });
+    doc.text(value || "—", valueRight - 2, rowY, { align: "right" });
   };
 
   rows.forEach(({ label, value, emphasis }, index) => {
@@ -168,12 +178,12 @@ function drawCard(
   doc.setFont("helvetica", "bold");
   const totalLabelWidth = width - panelInset * 2 - valueBoxWidth - columnGap;
   fitFontSize(doc, total.label, totalLabelWidth, 8.5, 6.25);
-  doc.text(total.label, x + panelInset, totalRowY);
+  doc.text(total.label, x + panelInset + 1, totalRowY);
   doc.setFillColor(255, 255, 255);
   doc.setDrawColor(...color);
   doc.roundedRect(
     x + width - panelInset - valueBoxWidth,
-    y + height - 10.8,
+    y + height - 10.6,
     valueBoxWidth,
     valueBoxHeight,
     1.35,
@@ -182,8 +192,8 @@ function drawCard(
   );
   doc.setTextColor(...INK);
   doc.setFont("helvetica", "bold");
-  fitFontSize(doc, total.value, valueBoxWidth - 5, 8.25, 6.25);
-  doc.text(total.value, x + width - panelInset - 2.25, totalRowY, { align: "right" });
+  fitFontSize(doc, total.value, valueBoxWidth - 4, 8.25, 6.25);
+  doc.text(total.value, x + width - panelInset - 2, totalRowY, { align: "right" });
 }
 
 function drawSlip(doc: jsPDF, slip: SlipInput, headerImage: HeaderImage) {
@@ -240,9 +250,9 @@ function drawSlip(doc: jsPDF, slip: SlipInput, headerImage: HeaderImage) {
       const x0 = columns[col]! + 3;
       const w = columns[col + 1]! - columns[col]! - 6;
       doc.setFont("helvetica", isLabel ? "bold" : "normal");
-      fitFontSize(doc, text || "—", w, isLabel ? 8.5 : 9, 6.25);
+      const displayText = fitText(doc, text || "—", w, isLabel ? 8.5 : 9, 6.25);
       doc.setTextColor(...INK);
-      doc.text(text || "—", x0, y + 6.3);
+      doc.text(displayText, x0, y + 6.3);
     });
   });
 
@@ -292,7 +302,7 @@ function drawSlip(doc: jsPDF, slip: SlipInput, headerImage: HeaderImage) {
     { label: "STATUS", value: status },
   );
 
-  const detailsY = 190;
+  const detailsY = 188;
   doc.setFillColor(245, 247, 249);
   doc.roundedRect(left, detailsY, contentWidth, 25, 2, 2, "F");
   doc.setTextColor(...INK);
@@ -306,23 +316,23 @@ function drawSlip(doc: jsPDF, slip: SlipInput, headerImage: HeaderImage) {
     fitFontSize(doc, text, width, 8.5, 6.25);
     doc.text(text, x, y, { align });
   };
-  paymentDetail(`Paid this month: ${money(toNum(row.paid))}`, left + 5, detailsY + 15, "left");
+  paymentDetail(`Paid this month: ${money(toNum(row.paid))}`, left + 5, detailsY + 14.5, "left");
   paymentDetail(
     `Remaining salary balance: ${money(balance)}`,
     left + contentWidth - 5,
-    detailsY + 15,
+    detailsY + 14.5,
     "right",
   );
   paymentDetail(
     `Advance brought forward: ${money(slip.carriedForward)}`,
     left + 5,
-    detailsY + 21,
+    detailsY + 20.5,
     "left",
   );
   paymentDetail(
     `New advance issued: ${money(toNum(row.new_advance))}`,
     left + contentWidth - 5,
-    detailsY + 21,
+    detailsY + 20.5,
     "right",
   );
 

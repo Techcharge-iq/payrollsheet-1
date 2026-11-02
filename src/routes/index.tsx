@@ -23,6 +23,7 @@ import {
   Menu,
   X,
   UserRound,
+  Stethoscope,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 
@@ -76,6 +77,9 @@ const WpsExportTab = lazy(() =>
   import("@/components/payroll/WpsExportTab").then((module) => ({
     default: module.WpsExportTab,
   })),
+);
+const DiagnosticsTab = lazy(() =>
+  import("@/components/payroll/DiagnosticsTab").then((m) => ({ default: m.DiagnosticsTab })),
 );
 const ManagementTab = lazy(() =>
   import("@/components/payroll/ManagementTab").then((module) => ({
@@ -150,6 +154,7 @@ const TABS = [
   { id: "wps", label: "WPS Export", icon: FileSpreadsheet },
   { id: "audit", label: "Audit Log", icon: ClipboardList, adminOnly: true },
   { id: "managing", label: "Managing", icon: UserRound, adminOnly: true },
+  { id: "diagnostics", label: "Diagnostics", icon: Stethoscope, adminOnly: true },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -801,6 +806,7 @@ function Dashboard({
             {tab === "wps" && <WpsExportTab employees={employees} role={role} />}
             {tab === "audit" && canDelete && <AuditHistoryTab />}
             {tab === "managing" && canDelete && <ManagementTab currentUserId={userId} />}
+            {tab === "diagnostics" && canDelete && <DiagnosticsTab />}
           </main>
         </Suspense>
 

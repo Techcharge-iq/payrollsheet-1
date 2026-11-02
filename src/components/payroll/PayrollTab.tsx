@@ -60,7 +60,12 @@ import {
 import { btnGold, btnIcon, btnOutline, btnPrimary, card, input, inputSm, select } from "./ui";
 import { NewAdvanceValue } from "./NewAdvanceValue";
 import { dbAny } from "@/integrations/supabase/external-client";
-import { effectiveRateForMonth, effectiveRateOnDate, type SalaryHistoryRecord } from "@/lib/salary-history";
+import {
+  effectiveRateForMonth,
+  effectiveRateOnDate,
+  normalizeSalaryHistory,
+  type SalaryHistoryRecord,
+} from "@/lib/salary-history";
 
 interface Props {
   employees: Employee[];
@@ -526,13 +531,13 @@ export function PayrollTab({
     queryFn: async (): Promise<
       SalaryHistoryRecord[]
     > => {
-      const { data, error } = await dbAny
-        .from("employee_salary_history")
-        .select("employee_id, hourly_rate, effective_on, created_at")
-        .order("effective_on", { ascending: false })
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as SalaryHistoryRecord[];
+      const { data, error } = await dbAny.from("employee_salary_history").select("*");
+      if (error) {
+        // Never block payroll on salary history; fall back to current hourly rates.
+        console.warn("Salary history unavailable, using current hourly rates:", error.message);
+        return [];
+      }
+      return normalizeSalaryHistory(data ?? []);
     },
   });
   const salaryHistory = salaryHistoryQuery.data ?? [];
@@ -699,7 +704,9 @@ export function PayrollTab({
           const regularHours = Number(entry.regular_hours ?? 0) + Number(entry.overtime_hours ?? 0);
           const overtimeHours = 0;
           if (regularHours + overtimeHours <= 0) return;
-          const rate = effectiveRateOnDate(employee.id, entry.work_date, salaryHistory);
+          const rate =
+            effectiveRateOnDate(employee.id, entry.work_date, salaryHistory) ??
+            (Number(employee.hourly_rate) || undefined);
           if (rate === undefined || rate <= 0) {
             missingRateDate = entry.work_date;
             return;
