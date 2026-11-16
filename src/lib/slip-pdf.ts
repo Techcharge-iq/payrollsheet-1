@@ -1,5 +1,6 @@
 import { jsPDF } from "jspdf";
 import JSZip from "jszip";
+import QRCode from "qrcode";
 import {
   fmt,
   lineBalance,
@@ -43,7 +44,13 @@ function fitFontSize(doc: jsPDF, text: string, maxWidth: number, preferred: numb
   return minimum;
 }
 
-function fitText(doc: jsPDF, text: string, maxWidth: number, preferred: number, minimum = 6): string {
+function fitText(
+  doc: jsPDF,
+  text: string,
+  maxWidth: number,
+  preferred: number,
+  minimum = 6,
+): string {
   fitFontSize(doc, text, maxWidth, preferred, minimum);
   if (doc.getTextWidth(text) <= maxWidth) return text;
   let truncated = text;
@@ -196,7 +203,7 @@ function drawCard(
   doc.text(total.value, x + width - panelInset - 2, totalRowY, { align: "right" });
 }
 
-function drawSlip(doc: jsPDF, slip: SlipInput, headerImage: HeaderImage) {
+function drawSlip(doc: jsPDF, slip: SlipInput, headerImage: HeaderImage, qrCode: string) {
   const { employee: e, month, row } = slip;
   const pageWidth = 210;
   const left = 15;
@@ -218,6 +225,7 @@ function drawSlip(doc: jsPDF, slip: SlipInput, headerImage: HeaderImage) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
   doc.text(monthLabel(month).toUpperCase(), pageWidth / 2, 44, { align: "center" });
+  doc.addImage(qrCode, "PNG", pageWidth - left - 15, 42, 15, 15);
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
@@ -381,7 +389,16 @@ function downloadBlob(blob: Blob, filename: string) {
 export async function generateSalarySlipPDF(slip: SlipInput, headerImage?: HeaderImage) {
   const resolvedHeaderImage = headerImage ?? (await loadHeaderImage());
   const doc = new jsPDF({ unit: "mm", format: "a4" });
-  drawSlip(doc, slip, resolvedHeaderImage);
+  const qrCode = await QRCode.toDataURL(
+    JSON.stringify({
+      employeeId: slip.employee.id_number || String(slip.employee.id),
+      month: slip.month,
+      netPay: toNum(slip.row.net_salary),
+      balance: lineBalance(slip.row),
+    }),
+    { errorCorrectionLevel: "M", margin: 1, width: 128 },
+  );
+  drawSlip(doc, slip, resolvedHeaderImage, qrCode);
   return doc.output("blob");
 }
 

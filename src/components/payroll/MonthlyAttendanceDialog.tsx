@@ -30,7 +30,10 @@ import { btnGold, btnOutline, btnPrimary, card, input, select } from "./ui";
 import { TimeControl } from "./TimeControl";
 
 type AttendanceStatus = TimesheetRecord["status"];
-type AttendanceEntry = Omit<TimesheetRecord, "id" | "created_at" | "total_hours" | "regular_hours" | "break_hours" | "overtime_hours">;
+type AttendanceEntry = Omit<
+  TimesheetRecord,
+  "id" | "created_at" | "total_hours" | "regular_hours" | "break_hours" | "overtime_hours"
+>;
 
 type AttendanceColumn = "inTime" | "outTime";
 
@@ -59,19 +62,43 @@ interface AttendanceSaveError {
 }
 
 function attendanceSaveError(error: unknown): AttendanceSaveError {
-  const value = error && typeof error === "object" ? error as Record<string, unknown> : {};
-  const message = typeof value["message"] === "string" ? value["message"] : typeof error === "string" ? error : "The save could not be completed.";
+  const value = error && typeof error === "object" ? (error as Record<string, unknown>) : {};
+  const message =
+    typeof value["message"] === "string"
+      ? value["message"]
+      : typeof error === "string"
+        ? error
+        : "The save could not be completed.";
   const code = typeof value["code"] === "string" ? value["code"] : undefined;
-  const details = [value["details"], value["hint"]].filter((part): part is string => typeof part === "string" && part.trim().length > 0).join(" · ");
-  let action = "Keep this window open and try saving again. If it fails again, share the error details with your payroll administrator.";
-  if (code === "23514") action = "Check the reported date: Present/Half day needs valid hours and an Out time after In time. Other statuses must have no shift hours.";
-  else if (code === "23503") action = "Reselect the employee, site and foreman; one of the selected records may have been removed or changed.";
-  else if (code === "23505") action = "Review this employee’s saved attendance for the reported date and edit the existing entry instead of adding a duplicate.";
-  else if (code === "42501" || /permission denied|row-level security/i.test(message)) action = "Ask your payroll administrator to check your attendance-saving permission and project assignment, then retry.";
-  else if (code === "PGRST301" || code === "PGRST302" || /jwt.*expired|invalid.*jwt/i.test(message)) action = "Your sign-in has expired. Note your unsaved entries before signing in again, then retry.";
-  else if (code === "428C9" || code === "PGRST204") action = "The attendance fields do not match the saved-record format. Share these details with your payroll administrator; changing hours will not fix this.";
-  else if (/fetch|network|offline|connection|timeout/i.test(message)) action = "Check your internet connection, then retry. If the previous request reached the server, review saved attendance before making changes.";
-  else if (code === "22007" || code === "22008") action = "Check the attendance date and times. Use a valid date and times between 00:00 and 23:59.";
+  const details = [value["details"], value["hint"]]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join(" · ");
+  let action =
+    "Keep this window open and try saving again. If it fails again, share the error details with your payroll administrator.";
+  if (code === "23514")
+    action =
+      "Check the reported date: Present/Half day needs valid hours and an Out time after In time. Other statuses must have no shift hours.";
+  else if (code === "23503")
+    action =
+      "Reselect the employee, site and foreman; one of the selected records may have been removed or changed.";
+  else if (code === "23505")
+    action =
+      "Review this employee’s saved attendance for the reported date and edit the existing entry instead of adding a duplicate.";
+  else if (code === "42501" || /permission denied|row-level security/i.test(message))
+    action =
+      "Ask your payroll administrator to check your attendance-saving permission and project assignment, then retry.";
+  else if (code === "PGRST301" || code === "PGRST302" || /jwt.*expired|invalid.*jwt/i.test(message))
+    action =
+      "Your sign-in has expired. Note your unsaved entries before signing in again, then retry.";
+  else if (code === "428C9" || code === "PGRST204")
+    action =
+      "The attendance fields do not match the saved-record format. Share these details with your payroll administrator; changing hours will not fix this.";
+  else if (/fetch|network|offline|connection|timeout/i.test(message))
+    action =
+      "Check your internet connection, then retry. If the previous request reached the server, review saved attendance before making changes.";
+  else if (code === "22007" || code === "22008")
+    action =
+      "Check the attendance date and times. Use a valid date and times between 00:00 and 23:59.";
   return { message, action, ...(details ? { details } : {}), ...(code ? { code } : {}) };
 }
 
@@ -118,7 +145,6 @@ function calcDurationHours(inTime: string, outTime: string) {
   if (inH === undefined || outH === undefined) return 0;
   return Math.max(0, (outH * 60 + outM - (inH * 60 + inM)) / 60);
 }
-
 
 function dayFromRecord(entry: TimesheetRecord): DayDraft {
   const inTime = entry.in_time?.slice(0, 5) ?? "";
@@ -216,11 +242,7 @@ const MonthDayRow = memo(function MonthDayRow({
       </td>
       <td className="px-2 py-1.5">
         <select
-          value={
-            row.projectId ||
-            projects.find((project) => project.name === row.site)?.id ||
-            ""
-          }
+          value={row.projectId || projects.find((project) => project.name === row.site)?.id || ""}
           onChange={(event) => {
             const project = projects.find((item) => item.id === event.target.value);
             updateDay(day, {
@@ -471,7 +493,7 @@ export function MonthlyAttendanceDialog({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const projects = projectsQuery.data ?? [];
+  const projects = useMemo(() => projectsQuery.data ?? [], [projectsQuery.data]);
 
   const foremanOptions = useMemo(() => {
     const options: Array<{ value: string; userId: string | null; name: string; label: string }> = (
@@ -501,7 +523,9 @@ export function MonthlyAttendanceDialog({
 
   useEffect(() => {
     if (initialForeman && foremanOptions.length && !defaultForemanValue) {
-      const found = foremanOptions.find((f) => f.name.toLowerCase() === initialForeman.toLowerCase());
+      const found = foremanOptions.find(
+        (f) => f.name.toLowerCase() === initialForeman.toLowerCase(),
+      );
       if (found) setDefaultForemanValue(found.value);
     }
   }, [foremanOptions, initialForeman, defaultForemanValue]);
@@ -529,7 +553,13 @@ export function MonthlyAttendanceDialog({
       ),
     );
     loadedContext.current = context;
-  }, [singleEmployeeId, month, timesheetsQuery.data, timesheetsQuery.error, timesheetsQuery.isLoading]);
+  }, [
+    singleEmployeeId,
+    month,
+    timesheetsQuery.data,
+    timesheetsQuery.error,
+    timesheetsQuery.isLoading,
+  ]);
 
   const updateDay = useMemo(() => {
     return (day: number, patch: Partial<DayDraft>) => {
@@ -588,7 +618,10 @@ export function MonthlyAttendanceDialog({
             ? { projectId: resolvedDefaultProject.id, site: resolvedDefaultProject.name }
             : {}),
           ...(resolvedDefaultForeman
-            ? { foreman: resolvedDefaultForeman.name, foremanUserId: resolvedDefaultForeman.userId ?? "" }
+            ? {
+                foreman: resolvedDefaultForeman.name,
+                foremanUserId: resolvedDefaultForeman.userId ?? "",
+              }
             : {}),
         };
       }
@@ -653,7 +686,10 @@ export function MonthlyAttendanceDialog({
   const saveSingle = async () => {
     setSaveError(null);
     if (!singleEmployeeId) {
-      setSaveError({ message: "No employee selected.", action: "Search for and select an employee before saving." });
+      setSaveError({
+        message: "No employee selected.",
+        action: "Search for and select an employee before saving.",
+      });
       notify("Select an employee before saving monthly attendance.", "warn");
       return;
     }
@@ -664,7 +700,10 @@ export function MonthlyAttendanceDialog({
     });
 
     if (!entries.length) {
-      setSaveError({ message: "No attendance days selected.", action: "Choose an attendance status for at least one day, then save again." });
+      setSaveError({
+        message: "No attendance days selected.",
+        action: "Choose an attendance status for at least one day, then save again.",
+      });
       notify("Record attendance status for at least one day.", "warn");
       return;
     }
@@ -697,18 +736,14 @@ export function MonthlyAttendanceDialog({
       const end = endHour * 60 + endMinute;
       const shiftHours = (end - start) / 60;
 
-      return (
-        !row.inTime ||
-        !row.outTime ||
-        end <= start ||
-        shiftHours <= 0
-      );
+      return !row.inTime || !row.outTime || end <= start || shiftHours <= 0;
     });
 
     if (invalidDays.length) {
       setSaveError({
         message: `Check day(s) ${invalidDays.map(({ day }) => day).join(", ")}.`,
-        action: "Select a site and foreman for each marked day (or set defaults above). For working days, enter valid positive hours or an Out time after In time.",
+        action:
+          "Select a site and foreman for each marked day (or set defaults above). For working days, enter valid positive hours or an Out time after In time.",
       });
       notify(
         `Check site, foreman, hours/time values for day(s) ${invalidDays.map(({ day }) => day).join(", ")}.`,
@@ -812,7 +847,7 @@ export function MonthlyAttendanceDialog({
           notify("Check that out time is after in time.", "warn");
           return;
         }
-        totalHours = ((endHour * 60 + endMinute) - (startHour * 60 + startMinute)) / 60;
+        totalHours = (endHour * 60 + endMinute - (startHour * 60 + startMinute)) / 60;
       }
     }
 
@@ -895,7 +930,8 @@ export function MonthlyAttendanceDialog({
                 Monthly attendance entry
               </DialogTitle>
               <DialogDescription>
-                Record monthly attendance for an individual employee or in bulk for multiple employees.
+                Record monthly attendance for an individual employee or in bulk for multiple
+                employees.
               </DialogDescription>
             </div>
             <div className="flex overflow-hidden rounded-lg border border-slate-300 text-xs font-semibold shadow-xs">
@@ -1017,15 +1053,23 @@ export function MonthlyAttendanceDialog({
         {entryMode === "single" && (
           <div className="flex min-h-0 flex-1 flex-col">
             {saveError && (
-              <div role="alert" className="shrink-0 max-h-40 overflow-y-auto border-b border-danger/30 bg-danger/10 px-4 py-3 text-xs text-danger">
-                <p className="font-bold">Attendance save failed{selectedEmployee ? ` · ${selectedEmployee.name} · ${month}` : ""}</p>
+              <div
+                role="alert"
+                className="shrink-0 max-h-40 overflow-y-auto border-b border-danger/30 bg-danger/10 px-4 py-3 text-xs text-danger"
+              >
+                <p className="font-bold">
+                  Attendance save failed
+                  {selectedEmployee ? ` · ${selectedEmployee.name} · ${month}` : ""}
+                </p>
                 <p className="mt-1 break-words">{saveError.message}</p>
                 <p className="mt-1 font-semibold break-words">{saveError.action}</p>
                 {(saveError.code || saveError.details) && (
                   <details className="mt-2">
                     <summary className="cursor-pointer font-semibold">Error details</summary>
                     {saveError.code && <p className="mt-1">Code: {saveError.code}</p>}
-                    {saveError.details && <p className="mt-1 break-words whitespace-pre-wrap">{saveError.details}</p>}
+                    {saveError.details && (
+                      <p className="mt-1 break-words whitespace-pre-wrap">{saveError.details}</p>
+                    )}
                   </details>
                 )}
               </div>
@@ -1168,7 +1212,9 @@ export function MonthlyAttendanceDialog({
               {!singleEmployeeId ? (
                 <div className="flex h-full flex-col items-center justify-center p-8 text-center text-muted-foreground">
                   <UserCheck size={36} className="mb-2 text-slate-400" />
-                  <p className="text-sm font-semibold">Select an employee from the dropdown above</p>
+                  <p className="text-sm font-semibold">
+                    Select an employee from the dropdown above
+                  </p>
                   <p className="text-xs text-slate-500">
                     You can inspect and customize their daily attendance for every day of {month}.
                   </p>
@@ -1193,7 +1239,9 @@ export function MonthlyAttendanceDialog({
                           <th className="px-2 py-2">Foreman</th>
                           {visibleColumns.inTime && <th className="px-2 py-2">In</th>}
                           {visibleColumns.outTime && <th className="px-2 py-2">Out</th>}
-                          <th className="px-2 py-2 text-right">{isManualHoursMode ? "Hours" : "Tot"}</th>
+                          <th className="px-2 py-2 text-right">
+                            {isManualHoursMode ? "Hours" : "Tot"}
+                          </th>
                           <th className="px-2 py-2">Notes</th>
                         </tr>
                       </thead>
@@ -1231,7 +1279,9 @@ export function MonthlyAttendanceDialog({
                           <th className="px-2 py-2">Foreman</th>
                           {visibleColumns.inTime && <th className="px-2 py-2">In</th>}
                           {visibleColumns.outTime && <th className="px-2 py-2">Out</th>}
-                          <th className="px-2 py-2 text-right">{isManualHoursMode ? "Hours" : "Tot"}</th>
+                          <th className="px-2 py-2 text-right">
+                            {isManualHoursMode ? "Hours" : "Tot"}
+                          </th>
                           <th className="px-2 py-2">Notes</th>
                         </tr>
                       </thead>
@@ -1336,7 +1386,8 @@ export function MonthlyAttendanceDialog({
                     Bulk Attendance Configuration
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    This schedule will be populated for all {selectedEmployeeIds.size} selected employee(s) across all {calendarDays.length} days of {month}.
+                    This schedule will be populated for all {selectedEmployeeIds.size} selected
+                    employee(s) across all {calendarDays.length} days of {month}.
                   </p>
                 </div>
 
@@ -1447,33 +1498,37 @@ export function MonthlyAttendanceDialog({
                   )}
                 </div>
 
-                {selectedEmployeeIds.size > 0 && resolvedDefaultProject && resolvedDefaultForeman && (
-                  <div className="rounded-xl border border-navy/20 bg-navy-soft/60 p-4">
-                    <p className="text-xs font-bold uppercase tracking-wider text-navy">
-                      Summary Preview for {month}
-                    </p>
-                    <div className="mt-2 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
-                      <div>
-                        <span className="text-slate-500">Employees:</span>
-                        <p className="font-bold text-navy">{selectedEmployeeIds.size}</p>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">Days in Month:</span>
-                        <p className="font-bold text-navy">{calendarDays.length}</p>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">Site:</span>
-                        <p className="truncate font-bold text-navy">{resolvedDefaultProject.name}</p>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">Total Entries:</span>
-                        <p className="font-extrabold text-navy">
-                          {(selectedEmployeeIds.size * calendarDays.length).toLocaleString()}
-                        </p>
+                {selectedEmployeeIds.size > 0 &&
+                  resolvedDefaultProject &&
+                  resolvedDefaultForeman && (
+                    <div className="rounded-xl border border-navy/20 bg-navy-soft/60 p-4">
+                      <p className="text-xs font-bold uppercase tracking-wider text-navy">
+                        Summary Preview for {month}
+                      </p>
+                      <div className="mt-2 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+                        <div>
+                          <span className="text-slate-500">Employees:</span>
+                          <p className="font-bold text-navy">{selectedEmployeeIds.size}</p>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Days in Month:</span>
+                          <p className="font-bold text-navy">{calendarDays.length}</p>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Site:</span>
+                          <p className="truncate font-bold text-navy">
+                            {resolvedDefaultProject.name}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Total Entries:</span>
+                          <p className="font-extrabold text-navy">
+                            {(selectedEmployeeIds.size * calendarDays.length).toLocaleString()}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
               </div>
             </div>
           </div>
@@ -1518,9 +1573,7 @@ export function MonthlyAttendanceDialog({
               className={btnGold}
             >
               <Save size={15} />{" "}
-              {saving
-                ? "Saving…"
-                : `Save Attendance for ${selectedEmployeeIds.size} Employee(s)`}
+              {saving ? "Saving…" : `Save Attendance for ${selectedEmployeeIds.size} Employee(s)`}
             </button>
           )}
         </DialogFooter>

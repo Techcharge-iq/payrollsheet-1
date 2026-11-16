@@ -191,10 +191,16 @@ async function mockPayrollBackend(
         const requestBody = request.postDataJSON() as
           Record<string, unknown> | Array<Record<string, unknown>>;
         const rows = Array.isArray(requestBody) ? requestBody : [requestBody];
-        if (table === "timesheets" && rows.some((row) => "total_hours" in row || "regular_hours" in row)) {
+        if (
+          table === "timesheets" &&
+          rows.some((row) => "total_hours" in row || "regular_hours" in row)
+        ) {
           await route.fulfill({
             status: 400,
-            json: { code: "428C9", message: "cannot insert a non-DEFAULT value into generated column" },
+            json: {
+              code: "428C9",
+              message: "cannot insert a non-DEFAULT value into generated column",
+            },
           });
           return;
         }
@@ -765,7 +771,9 @@ test("daily timesheet date changes keep the editor open and load the same batch"
   await expect(page.getByLabel("Foreman")).toHaveValue("legacy:Samir");
 });
 
-test("monthly attendance entry saves only days with a selected status", async ({ page }, testInfo) => {
+test("monthly attendance entry saves only days with a selected status", async ({
+  page,
+}, testInfo) => {
   const backend = await mockPayrollBackend(page, "admin");
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto("/");
@@ -813,7 +821,9 @@ test("monthly attendance entry saves only days with a selected status", async ({
 });
 
 for (const code of ["23514", "42501", "23503", "23505"]) {
-  test(`individual attendance retains entries and allows retry after ${code}`, async ({ page }, testInfo) => {
+  test(`individual attendance retains entries and allows retry after ${code}`, async ({
+    page,
+  }, testInfo) => {
     const backend = await mockPayrollBackend(page, "admin");
     let rejectSave = true;
     await page.route(`${supabaseUrl}/rest/v1/timesheets**`, async (route) => {
@@ -821,12 +831,15 @@ for (const code of ["23514", "42501", "23503", "23505"]) {
         await route.fallback();
         return;
       }
-      await route.fulfill({ status: 400, json: {
-        code,
-        message: "Attendance could not be accepted.",
-        details: "The selected attendance date requires review.",
-        hint: "Check the selected record.",
-      } });
+      await route.fulfill({
+        status: 400,
+        json: {
+          code,
+          message: "Attendance could not be accepted.",
+          details: "The selected attendance date requires review.",
+          hint: "Check the selected record.",
+        },
+      });
     });
     await page.goto("/");
     await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
@@ -910,7 +923,23 @@ test("monthly attendance preserves a saved 8 AM check-in", async ({ page }) => {
   const backend = await mockPayrollBackend(page, "admin");
   const now = new Date();
   const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  backend.state.timesheets.push({ id: randomUUID(), employee_id: 1, work_date: `${month}-01`, site: "North Campus", project_id: northCampusId, foreman: "Samir Foreman", foreman_user_id: foremanUserId, status: "PRESENT", in_time: "08:00:00", out_time: "17:00:00", total_hours: 8, break_hours: 1, overtime_hours: 0, remarks: null, created_at: timestamp });
+  backend.state.timesheets.push({
+    id: randomUUID(),
+    employee_id: 1,
+    work_date: `${month}-01`,
+    site: "North Campus",
+    project_id: northCampusId,
+    foreman: "Samir Foreman",
+    foreman_user_id: foremanUserId,
+    status: "PRESENT",
+    in_time: "08:00:00",
+    out_time: "17:00:00",
+    total_hours: 8,
+    break_hours: 1,
+    overtime_hours: 0,
+    remarks: null,
+    created_at: timestamp,
+  });
   await page.goto("/");
   await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
   await openTab(page, "Daily Timesheets", false);

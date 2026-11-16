@@ -74,11 +74,11 @@
 
 :root {
   --radius: 0.625rem;
-  --navy: oklch(0.2 0.026 233);
-  --navy-dark: oklch(0.14 0.024 233);
-  --navy-soft: oklch(0.96 0.009 218);
-  --gold: oklch(0.64 0.12 224);
-  --gold-dark: oklch(0.56 0.11 224);
+  --navy: oklch(0.28 0.065 250);
+  --navy-dark: oklch(0.21 0.055 252);
+  --navy-soft: oklch(0.95 0.018 245);
+  --gold: oklch(0.59 0.14 70);
+  --gold-dark: oklch(0.48 0.13 65);
   --money: oklch(0.52 0.12 155);
   --danger: oklch(0.58 0.2 22);
   --warn: oklch(0.66 0.14 62);
@@ -163,6 +163,20 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-feature-settings:
+      "ss01" on,
+      "cv11" on;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--gold) 28%, white);
+    color: var(--navy-dark);
+  }
+
+  :where(button, a, input, select, textarea):focus-visible {
+    outline: 3px solid color-mix(in oklch, var(--gold) 72%, white);
+    outline-offset: 2px;
   }
 
   .dashboard-hero {
@@ -255,8 +269,9 @@
 
   .workstation-shell {
     background:
-      radial-gradient(circle at top left, oklch(0.9 0.03 235 / 0.85), transparent 30%),
-      linear-gradient(180deg, oklch(0.97 0.006 220) 0%, oklch(0.95 0.008 220) 100%);
+      radial-gradient(circle at 5% 0%, oklch(0.9 0.045 235 / 0.82), transparent 34%),
+      radial-gradient(circle at 100% 100%, oklch(0.9 0.055 82 / 0.22), transparent 32%),
+      linear-gradient(180deg, oklch(0.98 0.008 245) 0%, oklch(0.95 0.014 240) 100%);
     min-height: 100dvh;
     padding: 24px 24px 24px 88px;
   }
@@ -324,20 +339,71 @@
     flex-direction: column;
     gap: 8px;
     overflow-y: auto;
-    padding: 8px;
+    width: 60px;
+    padding: 9px;
     transform: translateY(-50%);
-    border: 1px solid color-mix(in oklch, var(--border) 80%, white);
-    border-radius: 20px;
-    background: color-mix(in oklch, var(--card) 92%, transparent);
-    box-shadow: 0 12px 36px oklch(0.2 0.03 233 / 0.16);
-    backdrop-filter: blur(18px);
+    border: 1px solid oklch(1 0 0 / 0.72);
+    border-radius: 22px;
+    background: color-mix(in oklch, oklch(0.99 0.01 245) 78%, transparent);
+    box-shadow:
+      0 18px 48px oklch(0.24 0.05 250 / 0.16),
+      inset 0 1px 0 oklch(1 0 0 / 0.8);
+    backdrop-filter: blur(24px) saturate(1.45);
     scrollbar-width: none;
-    transition: transform 240ms cubic-bezier(0.2, 0.75, 0.25, 1);
+    transition:
+      width 220ms cubic-bezier(0.2, 0.75, 0.25, 1),
+      transform 240ms cubic-bezier(0.2, 0.75, 0.25, 1),
+      box-shadow 180ms ease;
   }
 
   .floating-menu:hover,
   .floating-menu:focus-within {
     transform: translateY(-50%);
+    width: 224px;
+    box-shadow:
+      0 22px 54px oklch(0.24 0.05 250 / 0.2),
+      inset 0 1px 0 oklch(1 0 0 / 0.85);
+  }
+
+  .floating-menu-brand {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 11px;
+    overflow: hidden;
+    padding: 0 3px 8px;
+    border-bottom: 1px solid color-mix(in oklch, var(--navy) 10%, transparent);
+    color: var(--navy);
+  }
+
+  .floating-menu-brand-icon {
+    display: flex;
+    width: 42px;
+    height: 36px;
+    flex: 0 0 42px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 13px;
+    background: linear-gradient(145deg, var(--navy), oklch(0.4 0.1 250));
+    color: white;
+    box-shadow: 0 5px 12px oklch(0.28 0.065 250 / 0.2);
+  }
+
+  .floating-menu-brand-label {
+    overflow: hidden;
+    color: var(--navy);
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    opacity: 0;
+    white-space: nowrap;
+    transition: opacity 120ms ease;
+  }
+
+  .floating-menu:hover .floating-menu-brand-label,
+  .floating-menu:focus-within .floating-menu-brand-label {
+    opacity: 1;
   }
 
   .floating-menu-trigger {
@@ -346,6 +412,13 @@
 
   .floating-menu-mobile-label {
     display: none;
+  }
+
+  .floating-menu:hover .floating-menu-links,
+  .floating-menu:hover .floating-menu-tools,
+  .floating-menu:focus-within .floating-menu-links,
+  .floating-menu:focus-within .floating-menu-tools {
+    align-items: stretch;
   }
 
   .floating-menu::-webkit-scrollbar {
@@ -382,6 +455,30 @@
       background-color 150ms ease,
       color 150ms ease,
       box-shadow 150ms ease;
+  }
+
+  .floating-menu:hover .floating-menu-button,
+  .floating-menu:focus-within .floating-menu-button {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 0 11px;
+  }
+
+  .floating-menu:hover .floating-menu-mobile-label,
+  .floating-menu:focus-within .floating-menu-mobile-label {
+    display: inline;
+    overflow: hidden;
+    color: inherit;
+    font-size: 12px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .floating-menu:hover .floating-menu-tooltip,
+  .floating-menu:focus-within .floating-menu-tooltip {
+    display: none;
   }
 
   .floating-menu-button:hover,
@@ -525,6 +622,7 @@
     overflow: visible;
     overflow-y: hidden;
     padding: 6px;
+    width: min(280px, calc(100vw - 24px));
     transform: none;
     border-radius: 18px;
     transition:
@@ -532,10 +630,18 @@
       opacity 180ms ease;
   }
 
+  .floating-menu-brand {
+    display: none;
+  }
+
   .floating-menu:hover,
   .floating-menu:focus-within,
   .floating-menu.is-open {
     transform: none;
+  }
+
+  .floating-menu-brand-label {
+    opacity: 1;
   }
 
   .floating-menu-trigger {

@@ -528,9 +528,7 @@ export function PayrollTab({
   );
   const salaryHistoryQuery = useQuery({
     queryKey: ["employee_salary_history"],
-    queryFn: async (): Promise<
-      SalaryHistoryRecord[]
-    > => {
+    queryFn: async (): Promise<SalaryHistoryRecord[]> => {
       const { data, error } = await dbAny.from("employee_salary_history").select("*");
       if (error) {
         // Never block payroll on salary history; fall back to current hourly rates.
@@ -1247,10 +1245,15 @@ export function PayrollTab({
                 <div>
                   <h3 className="text-lg font-extrabold text-navy">Payroll preview</h3>
                   <p className="text-xs text-muted-foreground">
-                    {monthLabel(preview.month)} · {preview.lines.length} employee(s) · regular rate only
+                    {monthLabel(preview.month)} · {preview.lines.length} employee(s) · regular rate
+                    only
                   </p>
                 </div>
-                <button onClick={() => setPreview(null)} className={btnOutline} aria-label="Close preview">
+                <button
+                  onClick={() => setPreview(null)}
+                  className={btnOutline}
+                  aria-label="Close preview"
+                >
                   <X size={15} />
                 </button>
               </div>
@@ -1292,14 +1295,21 @@ export function PayrollTab({
                       </td>
                       <td />
                       <td className="px-2 py-2 text-right">
-                        {fmt(preview.lines.reduce((t, l) => t + toNum(l.gross_pay ?? l.regular_pay ?? 0), 0))}
+                        {fmt(
+                          preview.lines.reduce(
+                            (t, l) => t + toNum(l.gross_pay ?? l.regular_pay ?? 0),
+                            0,
+                          ),
+                        )}
                       </td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
               <div className="mt-3 flex justify-end gap-2">
-                <button onClick={() => setPreview(null)} className={btnOutline}>Cancel</button>
+                <button onClick={() => setPreview(null)} className={btnOutline}>
+                  Cancel
+                </button>
                 <button onClick={() => generateFromTimesheets(false)} className={btnGold}>
                   Generate payroll
                 </button>

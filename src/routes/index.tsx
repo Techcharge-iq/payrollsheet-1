@@ -441,94 +441,94 @@ function Dashboard({
   const commandActions = useMemo(
     () =>
       [
-      {
-        id: "new-employee",
-        label: "New employee",
-        description: "Create a new worker profile",
-        shortcut: "N",
-        action: () => {
-          setForm(emptyForm);
-          setMode("new");
-          navigateToTab("employees");
+        {
+          id: "new-employee",
+          label: "New employee",
+          description: "Create a new worker profile",
+          shortcut: "N",
+          action: () => {
+            setForm(emptyForm);
+            setMode("new");
+            navigateToTab("employees");
+          },
         },
-      },
-      {
-        id: "employees",
-        label: "Open employees",
-        description: "Review the employee master list",
-        shortcut: "E",
-        action: () => navigateToTab("employees"),
-      },
-      {
-        id: "payroll",
-        label: "Open payroll",
-        description: "Manage monthly payroll batches",
-        shortcut: "P",
-        action: () => navigateToTab("payroll"),
-      },
-      {
-        id: "timesheets",
-        label: "Open timesheets",
-        description: "Review daily attendance entries",
-        shortcut: "T",
-        action: () => navigateToTab("timesheets"),
-      },
-      {
-        id: "attendance",
-        label: "Open attendance report",
-        description: "View labor and attendance metrics",
-        shortcut: "A",
-        action: () => navigateToTab("attendance"),
-      },
-      {
-        id: "advances",
-        label: "Open advances",
-        description: "Track outstanding employee advances",
-        shortcut: "V",
-        action: () => navigateToTab("advances"),
-      },
-      {
-        id: "history",
-        label: "Open history",
-        description: "See employee payroll history and balances",
-        shortcut: "H",
-        action: () => navigateToTab("history"),
-      },
-      {
-        id: "slips",
-        label: "Open salary slips",
-        description: "Generate and download payslips",
-        shortcut: "S",
-        action: () => navigateToTab("slips"),
-      },
-      {
-        id: "cost",
-        label: "Open cost allocation",
-        description: "Review labour and site cost reporting",
-        shortcut: "C",
-        action: () => navigateToTab("cost"),
-      },
+        {
+          id: "employees",
+          label: "Open employees",
+          description: "Review the employee master list",
+          shortcut: "E",
+          action: () => navigateToTab("employees"),
+        },
+        {
+          id: "payroll",
+          label: "Open payroll",
+          description: "Manage monthly payroll batches",
+          shortcut: "P",
+          action: () => navigateToTab("payroll"),
+        },
+        {
+          id: "timesheets",
+          label: "Open timesheets",
+          description: "Review daily attendance entries",
+          shortcut: "T",
+          action: () => navigateToTab("timesheets"),
+        },
+        {
+          id: "attendance",
+          label: "Open attendance report",
+          description: "View labor and attendance metrics",
+          shortcut: "A",
+          action: () => navigateToTab("attendance"),
+        },
+        {
+          id: "advances",
+          label: "Open advances",
+          description: "Track outstanding employee advances",
+          shortcut: "V",
+          action: () => navigateToTab("advances"),
+        },
+        {
+          id: "history",
+          label: "Open history",
+          description: "See employee payroll history and balances",
+          shortcut: "H",
+          action: () => navigateToTab("history"),
+        },
+        {
+          id: "slips",
+          label: "Open salary slips",
+          description: "Generate and download payslips",
+          shortcut: "S",
+          action: () => navigateToTab("slips"),
+        },
+        {
+          id: "cost",
+          label: "Open cost allocation",
+          description: "Review labour and site cost reporting",
+          shortcut: "C",
+          action: () => navigateToTab("cost"),
+        },
         ...(canDelete
-        ? [
-            {
-              id: "managing",
-              label: "Open user and project management",
-              description: "Manage accounts, roles, and projects",
-              shortcut: "M",
-              action: () => navigateToTab("managing"),
-            },
-          ]
-        : []),
+          ? [
+              {
+                id: "managing",
+                label: "Open user and project management",
+                description: "Manage accounts, roles, and projects",
+                shortcut: "M",
+                action: () => navigateToTab("managing"),
+              },
+            ]
+          : []),
         ...(canDelete
-        ? [
-            {
-              id: "audit",
-              label: "Open audit log",
-              description: "Review payroll changes and transactions",
-              shortcut: "L",
-              action: () => navigateToTab("audit"),
-            },
-          ]
+          ? [
+              {
+                id: "audit",
+                label: "Open audit log",
+                description: "Review payroll changes and transactions",
+                shortcut: "L",
+                action: () => navigateToTab("audit"),
+              },
+            ]
           : []),
       ].filter((action) => availableTabs.some((item) => item.id === action.id)),
     [availableTabs, canDelete, navigateToTab],
@@ -592,6 +592,12 @@ function Dashboard({
         className={`no-print floating-menu ${mobileMenuOpen ? "is-open" : ""}`}
         aria-label="Application menu"
       >
+        <div className="floating-menu-brand">
+          <span className="floating-menu-brand-icon">
+            <BriefcaseBusiness size={19} />
+          </span>
+          <span className="floating-menu-brand-label">Payroll Studio</span>
+        </div>
         <button
           type="button"
           className="floating-menu-trigger"
@@ -603,27 +609,25 @@ function Dashboard({
           <span>{mobileMenuOpen ? "Close menu" : `Menu · ${activeTab?.label ?? "Navigate"}`}</span>
         </button>
         <div id="application-menu-links" className="floating-menu-links">
-          {availableTabs.map(
-            ({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={(event) => {
-                  navigateToTab(id);
-                  setMobileMenuOpen(false);
-                  if (event.detail > 0) event.currentTarget.blur();
-                }}
-                aria-label={label}
-                aria-current={tab === id ? "page" : undefined}
-                title={label}
-                className={`floating-menu-button ${tab === id ? "is-active" : ""}`}
-              >
-                <Icon size={19} strokeWidth={tab === id ? 2.5 : 2} />
-                <span className="floating-menu-mobile-label">{label}</span>
-                <span className="floating-menu-tooltip">{label}</span>
-              </button>
-            ),
-          )}
+          {availableTabs.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={(event) => {
+                navigateToTab(id);
+                setMobileMenuOpen(false);
+                if (event.detail > 0) event.currentTarget.blur();
+              }}
+              aria-label={label}
+              aria-current={tab === id ? "page" : undefined}
+              title={label}
+              className={`floating-menu-button ${tab === id ? "is-active" : ""}`}
+            >
+              <Icon size={19} strokeWidth={tab === id ? 2.5 : 2} />
+              <span className="floating-menu-mobile-label">{label}</span>
+              <span className="floating-menu-tooltip">{label}</span>
+            </button>
+          ))}
         </div>
         <div className="floating-menu-tools">
           <button
