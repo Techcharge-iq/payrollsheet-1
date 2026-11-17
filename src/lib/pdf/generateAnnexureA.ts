@@ -40,31 +40,33 @@ export interface AnnexureAData {
  * Fetches attendance and shift data for a site and month, aggregating per employee.
  */
 export async function fetchAnnexureAData(siteIdOrName: string, month: string): Promise<AnnexureAData> {
+  if (!siteIdOrName.trim() || siteIdOrName === "All Sites") {
+    throw new Error("Select a site before exporting Annexure A.");
+  }
   // 1. Resolve site information
   let siteName = siteIdOrName;
   let siteLocation = "";
   let resolvedProjectId: string | null = null;
 
-  try {
-    const { data: project } = await dbAny
+  const isProjectId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(siteIdOrName);
+    const { data: project, error: projectError } = await dbAny
       .from("projects")
       .select("id, name, location")
-      .or(`id.eq.${siteIdOrName},name.eq.${siteIdOrName}`)
+      .eq(isProjectId ? "id" : "name", siteIdOrName.trim())
       .maybeSingle();
-
+    if (projectError) throw new Error(`Could not load the selected site: ${projectError.message}`);
+    if (isProjectId && !project) throw new Error("The selected project could not be found.");
     if (project) {
       siteName = project.name;
       siteLocation = project.location || "";
       resolvedProjectId = project.id;
     }
-  } catch {
-    // If not found by UUID, siteName remains as passed
-  }
 
   // 2. Fetch all employees for name and ID resolution
-  const { data: employeesData } = await dbAny
+  const { data: employeesData, error: employeeError } = await dbAny
     .from("employees")
     .select("id, name, id_number, trade");
+  if (employeeError) throw new Error(`Could not load employees: ${employeeError.message}`);
 
   const empMap = new Map<number, { name: string; civilId: string; trade: string }>();
   (employeesData ?? []).forEach((e: { id: number; name: string; id_number?: string; trade?: string }) => {
@@ -81,45 +83,20 @@ export async function fetchAnnexureAData(siteIdOrName: string, month: string): P
   const lastDay = new Date(Number(year), Number(monthPart), 0).getDate();
   const endDate = `${year}-${monthPart}-${String(lastDay).padStart(2, "0")}`;
 
-  let attendanceRows: Array<{
-    employee_id: number;
-    verified_hours?: number;
-    overtime_hours?: number;
-    status?: string;
-    work_date?: string;
-  }> = [];
-
-  try {
-    let attQuery = dbAny
-      .from("attendance")
-      .select("employee_id, verified_hours, overtime_hours, status, work_date")
-      .gte("work_date", startDate)
-      .lte("work_date", endDate);
-
-    if (resolvedProjectId) {
-      attQuery = attQuery.eq("site_id", resolvedProjectId);
-    }
-
-    const { data: attData, error: attErr } = await attQuery;
-    if (!attErr && attData && attData.length > 0) {
-      attendanceRows = attData;
-    }
-  } catch {
-    // Fall back to timesheets
-  }
-
-  // 4. If attendance table returned no records, fall back to timesheets table
-  if (attendanceRows.length === 0) {
-    try {
-      const { data: tsData } = await dbAny
+  // Timesheets are the application's authoritative attendance source.
+  // Match project identity, or an exact normalized name for legacy rows without an ID.
+      const { data: tsData, error: timesheetError } = await dbAny
         .from("timesheets")
-        .select("employee_id, site, total_hours, regular_hours, overtime_hours, status, work_date")
+        .select("employee_id, project_id, site, total_hours, regular_hours, overtime_hours, status, work_date")
         .gte("work_date", startDate)
-        .lte("work_date", endDate)
-        .ilike("site", `%${siteName}%`);
-
-      if (tsData && tsData.length > 0) {
-        attendanceRows = tsData.map((ts: {
+        .lte("work_date", endDate);
+      if (timesheetError) throw new Error(`Could not load attendance: ${timesheetError.message}`);
+      const normalize = (name: string) => name.trim().toLowerCase();
+      const attendanceRows = (tsData ?? []).filter((ts: { project_id?: string | null; site: string }) =>
+        resolvedProjectId && ts.project_id
+          ? ts.project_id === resolvedProjectId
+          : normalize(ts.site || "") === normalize(siteName),
+      ).map((ts: {
           employee_id: number;
           total_hours?: number;
           regular_hours?: number;
@@ -128,16 +105,11 @@ export async function fetchAnnexureAData(siteIdOrName: string, month: string): P
           work_date?: string;
         }) => ({
           employee_id: Number(ts.employee_id),
-          verified_hours: Number(ts.regular_hours || ts.total_hours || 0),
+          verified_hours: Number(ts.regular_hours ?? ts.total_hours ?? 0),
           overtime_hours: Number(ts.overtime_hours || 0),
           status: ts.status || "PRESENT",
           work_date: ts.work_date,
         }));
-      }
-    } catch {
-      // Continue with empty or whatever found
-    }
-  }
 
   // 5. Aggregate metrics per worker
   const workerAggMap = new Map<number, WorkerAttendanceSummary>();

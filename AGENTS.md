@@ -6,3 +6,4 @@
 - Timesheet attachments use a private bucket with user-prefixed paths and signed URLs, preserving document privacy without anonymous read access.
 - Monthly attendance prefills new days from the date's deployment as a whole before attendance-history fallback; persisted days remain authoritative to preserve recorded allocations.
 - Payroll generation reads all cached batches for prior deduction lookup, while display and duplicate checks remain scoped to the selected month; explicit zero food deductions remain valid.
+- Annexure A requires an explicitly selected site and reads canonical timesheets by project identity, with exact normalized site-name fallback for legacy records; partial names must never combine separate projects.

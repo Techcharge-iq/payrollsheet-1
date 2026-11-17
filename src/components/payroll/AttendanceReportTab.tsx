@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   CalendarDays,
   Clock3,
   Download,
   FileSpreadsheet,
+  FileDown,
   Loader2,
   MapPin,
   Printer,
@@ -11,8 +12,8 @@ import {
   Users,
 } from "lucide-react";
 import type { Employee } from "@/lib/payroll";
-import { useSaveTimesheets, useTimesheetsForMonth, type TimesheetRecord } from "@/lib/payroll-data";
-import { currentPayrollMonth, fmt, monthLabel, payrollMonthOptions } from "@/lib/payroll";
+import { useBatches, useSaveTimesheets, useTimesheetsForMonth, type TimesheetRecord } from "@/lib/payroll-data";
+import { currentPayrollMonth, fmt, monthLabel, payrollMonthOptions, toNum } from "@/lib/payroll";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   downloadAttendanceImportTemplate,
@@ -21,16 +22,10 @@ import {
 } from "@/lib/attendance-import";
 import { downloadAttendanceReport } from "@/lib/attendance-report-pdf";
 import type { TablesInsert } from "@/integrations/supabase/external-types";
-import { btnOutline, card, select } from "./ui";
-import { useCallback, useMemo, useState } from "react";
-import { CalendarDays, Clock3, FileDown, Loader2, MapPin, Printer, Users } from "lucide-react";
-import type { Employee } from "@/lib/payroll";
-import { useBatches, useTimesheetsForMonth, type TimesheetRecord } from "@/lib/payroll-data";
 import { useProjects } from "@/lib/management-data";
-import { currentPayrollMonth, fmt, monthLabel, payrollMonthOptions, toNum } from "@/lib/payroll";
 import { exportAnnexureAPDF } from "@/lib/pdf/generateAnnexureA";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { btnGold, btnOutline, card, select } from "./ui";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   employees: Employee[];
@@ -307,6 +302,7 @@ export function AttendanceReportTab({ employees }: Props) {
   const [isSavingImport, setIsSavingImport] = useState(false);
   const saveTimesheets = useSaveTimesheets();
   const [exportingAnnexureA, setExportingAnnexureA] = useState(false);
+  const [annexureError, setAnnexureError] = useState("");
   const timesheetsQuery = useTimesheetsForMonth(month);
   const batchesQuery = useBatches(month);
   const projectsQuery = useProjects(true);
@@ -424,15 +420,6 @@ export function AttendanceReportTab({ employees }: Props) {
     }),
     { days: 0, hours: 0, present: 0, absent: 0, overtime: 0, deductions: 0 },
   );
-  const staffTotals = employeeRows
-    .filter((entry) => entry.status === "PRESENT" || entry.status === "HALF_DAY")
-    .reduce(
-      (totals, entry) => ({
-        days: totals.days + 1,
-        hours: totals.hours + netHours(entry),
-      }),
-      { days: 0, hours: 0 },
-    );
   const exportRows =
     filter === "staff" ? employeeRows : reportRows.filter((entry) => entry.site === site);
   const existingImportCount = importRows.filter((row) =>
@@ -554,20 +541,21 @@ export function AttendanceReportTab({ employees }: Props) {
           Download PDF
         </button>
         <div className="no-print ml-auto flex flex-wrap items-center gap-2">
-          <button
+          <Button
             type="button"
             onClick={async () => {
-              const targetSite = site || sites[0] || "All Sites";
+              if (filter !== "site" || !site) return;
+              setAnnexureError("");
               setExportingAnnexureA(true);
               try {
-                await exportAnnexureAPDF(targetSite, month);
+                await exportAnnexureAPDF(site, month);
               } catch (err) {
-                console.error("Failed to export Annexure A PDF:", err);
+                setAnnexureError(err instanceof Error ? err.message : "Could not export Annexure A. Please retry.");
               } finally {
                 setExportingAnnexureA(false);
               }
             }}
-            disabled={exportingAnnexureA}
+            disabled={exportingAnnexureA || loading || filter !== "site" || !site}
             className={`${btnGold} text-xs`}
             title="Download verified Annexure A PDF for site performance audit"
           >
@@ -582,7 +570,7 @@ export function AttendanceReportTab({ employees }: Props) {
                 Export Annexure A (PDF)
               </>
             )}
-          </button>
+          </Button>
           <button
             type="button"
             onClick={() => window.print()}
@@ -593,6 +581,7 @@ export function AttendanceReportTab({ employees }: Props) {
           </button>
         </div>
       </header>
+      {annexureError && <p role="alert" className="no-print text-sm text-danger">{annexureError}</p>}
 
       <div className={card + " no-print space-y-4 p-4"}>
         <div className="flex flex-wrap gap-2" role="group" aria-label="Report filter">

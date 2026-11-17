@@ -1537,8 +1537,6 @@ export function PayrollTab({
                 <button onClick={() => setPreview(null)} className={btnOutline}>
                   Cancel
                 </button>
-                <button onClick={() => generateFromTimesheets(false)} className={btnGold}>
-                  Generate payroll
                 <button
                   onClick={() => generateFromTimesheets(false)}
                   disabled={saving}
