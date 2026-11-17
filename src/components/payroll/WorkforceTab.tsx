@@ -6,6 +6,7 @@ import {
   CalendarHeart,
   Check,
   Clock3,
+  LoaderCircle,
   Plus,
   Search,
   X,
@@ -14,13 +15,17 @@ import type { Employee } from "@/lib/payroll";
 import { dbAny } from "@/integrations/supabase/external-client";
 import { useProjects } from "@/lib/management-data";
 import { projectAccessError } from "@/lib/project-access";
+import {
+  normalizeSalaryHistory,
+  salaryHistoryInsert,
+  type SalaryHistoryRecord,
+} from "@/lib/salary-history";
 import { btnGold, btnOutline, btnPrimary, card, input, select } from "./ui";
 
-interface SalaryRecord {
+interface SalaryRecord extends SalaryHistoryRecord {
   id: string;
   employee_id: number;
   hourly_rate: number;
-  effective_on: string;
   created_at: string;
 }
 interface Assignment {
@@ -108,12 +113,18 @@ export function WorkforceTab({
   const salaries = useQuery({
     queryKey: ["employee_salary_history"],
     queryFn: async () => {
-      const { data, error } = await dbAny
-        .from("employee_salary_history")
-        .select("*")
-        .order("effective_on", { ascending: false });
+      const { data, error } = await dbAny.from("employee_salary_history").select("*");
       if (error) throw error;
-      return (data ?? []) as SalaryRecord[];
+      return (data ?? [])
+        .map((row: Record<string, unknown>) => ({
+          ...row,
+          ...normalizeSalaryHistory([row])[0],
+        }))
+        .sort(
+          (a: SalaryRecord, b: SalaryRecord) =>
+            (b.effective_from ?? "").localeCompare(a.effective_from ?? "") ||
+            b.created_at.localeCompare(a.created_at),
+        ) as SalaryRecord[];
     },
   });
   const payrollSettings = useQuery({
@@ -217,7 +228,7 @@ export function WorkforceTab({
       } else {
         const { error } = await dbAny
           .from("employee_salary_history")
-          .insert({ employee_id: id, hourly_rate: amount, effective_on: rateDate });
+          .insert(salaryHistoryInsert(id, amount, rateDate));
         if (error) throw error;
       }
     },
@@ -468,8 +479,12 @@ export function WorkforceTab({
             disabled={saveRate.isPending}
             onClick={() => saveRate.mutate()}
           >
-            <Plus size={15} />
-            Record rate
+            {saveRate.isPending ? (
+              <LoaderCircle size={15} className="animate-spin" />
+            ) : (
+              <Plus size={15} />
+            )}
+            {saveRate.isPending ? "Saving…" : "Record rate"}
           </button>
         </div>
         <div className="max-h-56 overflow-auto rounded-lg border border-border">
@@ -489,7 +504,7 @@ export function WorkforceTab({
                     {employees.find((e) => e.id === r.employee_id)?.name ??
                       `Employee ${r.employee_id}`}
                   </td>
-                  <td className="p-2">{r.effective_on}</td>
+                  <td className="p-2">{r.effective_from ?? "Unknown"}</td>
                   <td className="p-2 text-right">{Number(r.hourly_rate).toFixed(3)}</td>
                   <td className="p-2">{new Date(r.created_at).toLocaleDateString()}</td>
                 </tr>
@@ -557,8 +572,12 @@ export function WorkforceTab({
             disabled={saveTransfer.isPending}
             onClick={() => saveTransfer.mutate()}
           >
-            <Plus size={15} />
-            Request transfer
+            {saveTransfer.isPending ? (
+              <LoaderCircle size={15} className="animate-spin" />
+            ) : (
+              <Plus size={15} />
+            )}
+            {saveTransfer.isPending ? "Submitting…" : "Request transfer"}
           </button>
         </div>
         <input
@@ -586,17 +605,27 @@ export function WorkforceTab({
                 <>
                   <button
                     className={btnOutline}
+                    disabled={reviewTransfer.isPending}
                     onClick={() => reviewTransfer.mutate({ id: request.id, status: "APPROVED" })}
                   >
-                    <Check size={14} />
-                    Approve
+                    {reviewTransfer.isPending ? (
+                      <LoaderCircle size={14} className="animate-spin" />
+                    ) : (
+                      <Check size={14} />
+                    )}
+                    {reviewTransfer.isPending ? "Saving…" : "Approve"}
                   </button>
                   <button
                     className={btnOutline}
+                    disabled={reviewTransfer.isPending}
                     onClick={() => reviewTransfer.mutate({ id: request.id, status: "REJECTED" })}
                   >
-                    <X size={14} />
-                    Reject
+                    {reviewTransfer.isPending ? (
+                      <LoaderCircle size={14} className="animate-spin" />
+                    ) : (
+                      <X size={14} />
+                    )}
+                    {reviewTransfer.isPending ? "Saving…" : "Reject"}
                   </button>
                 </>
               )}
@@ -741,7 +770,11 @@ export function WorkforceTab({
                     }
                     onClick={() => assignEmployees.mutate()}
                   >
-                    <BriefcaseBusiness size={15} />
+                    {assignEmployees.isPending ? (
+                      <LoaderCircle size={15} className="animate-spin" />
+                    ) : (
+                      <BriefcaseBusiness size={15} />
+                    )}
                     {assignEmployees.isPending
                       ? "Assigning…"
                       : `Assign ${assignmentEmployeeIds.length || ""} to site`}
@@ -823,8 +856,12 @@ export function WorkforceTab({
             disabled={saveLeaveType.isPending}
             onClick={() => saveLeaveType.mutate()}
           >
-            <Plus size={15} />
-            Add leave type
+            {saveLeaveType.isPending ? (
+              <LoaderCircle size={15} className="animate-spin" />
+            ) : (
+              <Plus size={15} />
+            )}
+            {saveLeaveType.isPending ? "Saving…" : "Add leave type"}
           </button>
         </div>
         <div className="grid gap-3 sm:grid-cols-4">
@@ -886,8 +923,12 @@ export function WorkforceTab({
             disabled={submitLeave.isPending}
             onClick={() => submitLeave.mutate()}
           >
-            <Plus size={15} />
-            Submit leave
+            {submitLeave.isPending ? (
+              <LoaderCircle size={15} className="animate-spin" />
+            ) : (
+              <Plus size={15} />
+            )}
+            {submitLeave.isPending ? "Submitting…" : "Submit leave"}
           </button>
         </div>
         <div className="max-h-60 space-y-2 overflow-auto">
@@ -920,17 +961,27 @@ export function WorkforceTab({
                   <>
                     <button
                       className={btnOutline}
+                      disabled={reviewLeave.isPending}
                       onClick={() => reviewLeave.mutate({ id: r.id, status: "APPROVED" })}
                     >
-                      <Check size={14} />
-                      Approve
+                      {reviewLeave.isPending ? (
+                        <LoaderCircle size={14} className="animate-spin" />
+                      ) : (
+                        <Check size={14} />
+                      )}
+                      {reviewLeave.isPending ? "Saving…" : "Approve"}
                     </button>
                     <button
                       className={btnOutline}
+                      disabled={reviewLeave.isPending}
                       onClick={() => reviewLeave.mutate({ id: r.id, status: "REJECTED" })}
                     >
-                      <X size={14} />
-                      Reject
+                      {reviewLeave.isPending ? (
+                        <LoaderCircle size={14} className="animate-spin" />
+                      ) : (
+                        <X size={14} />
+                      )}
+                      {reviewLeave.isPending ? "Saving…" : "Reject"}
                     </button>
                   </>
                 )}

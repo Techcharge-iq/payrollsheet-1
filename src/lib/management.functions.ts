@@ -35,7 +35,11 @@ const saveProjectInput = z.object({
   foremanUserId: z.string().uuid().nullable(),
 });
 
-async function assertAdmin(context: { userId: string; supabase: SupabaseClient<any> }) {
+async function assertAdmin(context: {
+  userId: string;
+  supabase: SupabaseClient<any>;
+  claims: Record<string, unknown>;
+}) {
   const { data, error } = await context.supabase
     .from("users")
     .select("role,is_active")

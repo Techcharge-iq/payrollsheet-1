@@ -6,6 +6,7 @@ import {
   CalendarDays,
   CheckSquare,
   Clock,
+  LoaderCircle,
   Save,
   Search,
   Sparkles,
@@ -388,6 +389,28 @@ export function MonthlyAttendanceDialog({
   const [bulkOffStatus, setBulkOffStatus] = useState<AttendanceStatus>("WEEKLY_OFF");
 
   const timesheetsQuery = useTimesheetsForMonth(month);
+  const latestAttendanceQuery = useQuery({
+    queryKey: ["timesheets", "latest-site", singleEmployeeId, month],
+    enabled: Boolean(singleEmployeeId),
+    queryFn: async () => {
+      const { data, error } = await dbAny
+        .from("timesheets")
+        .select("site,project_id,foreman,foreman_user_id,work_date")
+        .eq("employee_id", Number(singleEmployeeId))
+        .lt("work_date", `${month}-01`)
+        .order("work_date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data as {
+        site: string;
+        project_id: string | null;
+        foreman: string;
+        foreman_user_id: string | null;
+        work_date: string;
+      } | null;
+    },
+  });
   const timeMode = Boolean(visibleColumns.inTime && visibleColumns.outTime);
   const assignmentsQuery = useQuery({
     queryKey: ["employee_site_assignments", "monthly", singleEmployeeId],
@@ -540,22 +563,67 @@ export function MonthlyAttendanceDialog({
   );
 
   useEffect(() => {
-    if (!singleEmployeeId || timesheetsQuery.isLoading || timesheetsQuery.error) return;
+    if (
+      !singleEmployeeId ||
+      timesheetsQuery.isLoading ||
+      timesheetsQuery.error ||
+      latestAttendanceQuery.isLoading ||
+      assignmentsQuery.isLoading ||
+      projectsQuery.isLoading
+    ) {
+      return;
+    }
     const context = `${month}:${singleEmployeeId}`;
     if (loadedContext.current === context) return;
 
-    const entries = (timesheetsQuery.data ?? []).filter(
-      (entry) => String(entry.employee_id) === singleEmployeeId,
-    );
-    setDays(
-      Object.fromEntries(
-        entries.map((entry) => [Number(entry.work_date.slice(-2)), dayFromRecord(entry)]),
-      ),
-    );
+    const entries = (timesheetsQuery.data ?? [])
+      .filter((entry) => String(entry.employee_id) === singleEmployeeId)
+      .sort((a, b) => a.work_date.localeCompare(b.work_date));
+    const priorMonthEntry = latestAttendanceQuery.data;
+    const nextDays: Record<number, DayDraft> = {};
+    for (const day of calendarDays) {
+      const date = `${month}-${String(day).padStart(2, "0")}`;
+      const existing = entries.find((entry) => entry.work_date === date);
+      if (existing) {
+        nextDays[day] = dayFromRecord(existing);
+        continue;
+      }
+
+      const lastMonthEntry = [...entries].reverse().find((entry) => entry.work_date < date);
+      const priorEntry = lastMonthEntry ?? priorMonthEntry;
+      const assignment = assignmentForDate(assignmentsQuery.data ?? [], date);
+      // A dated deployment wins as a whole, including an intentionally unassigned foreman.
+      // Previous attendance is only a fallback when there is no active deployment.
+      const site = assignment ? assignment.site : priorEntry?.site || resolvedDefaultProject?.name || "";
+      const projectId = assignment
+        ? assignment.projectId || projects.find((project) => project.name === site)?.id || ""
+        : priorEntry?.project_id ||
+          projects.find((project) => project.name === site)?.id ||
+          resolvedDefaultProject?.id ||
+          "";
+      nextDays[day] = {
+        ...emptyDay(),
+        site,
+        projectId,
+        foreman: assignment ? assignment.foreman : priorEntry?.foreman || "",
+        foremanUserId: assignment ? assignment.foremanUserId : priorEntry?.foreman_user_id || "",
+      };
+    }
+    setDays(nextDays);
     loadedContext.current = context;
   }, [
     singleEmployeeId,
     month,
+    assignmentsQuery.data,
+    assignmentsQuery.isLoading,
+    calendarDays,
+    latestAttendanceQuery.data,
+    latestAttendanceQuery.isLoading,
+    month,
+    projects,
+    projectsQuery.isLoading,
+    resolvedDefaultProject,
+    singleEmployeeId,
     timesheetsQuery.data,
     timesheetsQuery.error,
     timesheetsQuery.isLoading,
@@ -684,6 +752,7 @@ export function MonthlyAttendanceDialog({
   };
 
   const saveSingle = async () => {
+    if (saving) return;
     setSaveError(null);
     if (!singleEmployeeId) {
       setSaveError({
@@ -806,6 +875,7 @@ export function MonthlyAttendanceDialog({
   };
 
   const saveMultiple = async () => {
+    if (saving) return;
     if (selectedEmployeeIds.size === 0) {
       notify("Select at least one employee.", "warn");
       return;
@@ -1047,6 +1117,15 @@ export function MonthlyAttendanceDialog({
         {timesheetsQuery.error && (
           <p className="m-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
             Could not load monthly attendance: {timesheetsQuery.error.message}
+          </p>
+        )}
+        {latestAttendanceQuery.error && (
+          <p
+            role="alert"
+            className="m-3 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn"
+          >
+            Could not look up the employee’s last recorded site. Choose the correct site manually.{" "}
+            {latestAttendanceQuery.error.message}
           </p>
         )}
 
@@ -1550,13 +1629,15 @@ export function MonthlyAttendanceDialog({
               disabled={
                 saving ||
                 timesheetsQuery.isLoading ||
+                latestAttendanceQuery.isLoading ||
                 projectsQuery.isLoading ||
                 foremenQuery.isLoading ||
                 !singleEmployeeId
               }
               className={btnPrimary}
             >
-              <Save size={15} /> {saving ? "Saving…" : "Save Individual Attendance"}
+              {saving ? <LoaderCircle size={15} className="animate-spin" /> : <Save size={15} />}{" "}
+              {saving ? "Saving…" : "Save Individual Attendance"}
             </button>
           ) : (
             <button
@@ -1573,6 +1654,7 @@ export function MonthlyAttendanceDialog({
               className={btnGold}
             >
               <Save size={15} />{" "}
+              {saving ? <LoaderCircle size={15} className="animate-spin" /> : <Save size={15} />}{" "}
               {saving ? "Saving…" : `Save Attendance for ${selectedEmployeeIds.size} Employee(s)`}
             </button>
           )}

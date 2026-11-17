@@ -18,12 +18,14 @@ interface MockState {
   projects: Array<Record<string, unknown>>;
   manager_project_assignments: Array<Record<string, unknown>>;
   employee_site_assignments: Array<Record<string, unknown>>;
+  payroll_settings: Array<Record<string, unknown>>;
 }
 
 async function mockPayrollBackend(
   page: Page,
   role: "admin" | "hr" | "foreman",
   failPayrollLineSave = false,
+  accountEmail = "payroll@example.test",
 ) {
   const signedInUserId = role === "foreman" ? foremanUserId : userId;
   const state: MockState = {
@@ -34,6 +36,7 @@ async function mockPayrollBackend(
         trade: "HELPER",
         id_number: "E-001",
         hourly_rate: 3,
+        default_food_deduction: 0,
         status: "Active",
         created_at: timestamp,
       },
@@ -64,6 +67,15 @@ async function mockPayrollBackend(
       },
     ],
     manager_project_assignments: [],
+    payroll_settings: [
+      {
+        singleton: true,
+        overtime_multiplier: null,
+        default_food_deduction: 0,
+        updated_at: timestamp,
+        updated_by: null,
+      },
+    ],
     employee_site_assignments:
       role === "foreman"
         ? [
@@ -98,7 +110,7 @@ async function mockPayrollBackend(
   };
 
   await page.addInitScript(
-    ({ userId, timestamp }) => {
+    ({ userId, timestamp, accountEmail }) => {
       const session = {
         access_token: "mock-access-token",
         token_type: "bearer",
@@ -109,7 +121,7 @@ async function mockPayrollBackend(
           id: userId,
           aud: "authenticated",
           role: "authenticated",
-          email: "payroll@example.test",
+          email: accountEmail,
           app_metadata: { provider: "email", providers: ["email"] },
           user_metadata: {},
           created_at: timestamp,
@@ -117,7 +129,7 @@ async function mockPayrollBackend(
       };
       localStorage.setItem("sb-milcjipktyhlwiriujrw-auth-token", JSON.stringify(session));
     },
-    { userId: signedInUserId, timestamp },
+    { userId: signedInUserId, timestamp, accountEmail },
   );
 
   await page.route(`${supabaseUrl}/**`, async (route) => {
@@ -359,6 +371,19 @@ test.describe("responsive application navigation and dialogs", () => {
     test(`${viewport.name}: menu navigation and payroll dialog layering`, async ({ page }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       const backend = await mockPayrollBackend(page, "admin");
+      const month = new Date().toISOString().slice(0, 7);
+      backend.state.timesheets.push({
+        id: randomUUID(),
+        employee_id: 1,
+        site: "North Campus",
+        project_id: northCampusId,
+        foreman: "Samir Foreman",
+        foreman_user_id: foremanUserId,
+        work_date: `${month}-05`,
+        status: "PRESENT",
+        regular_hours: 8,
+        overtime_hours: 0,
+      });
       await page.goto("/");
       await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
       expect(
@@ -382,8 +407,12 @@ test.describe("responsive application navigation and dialogs", () => {
       ]) {
         expect(backend.reads.get(table)).toBe(1);
       }
-      await expect(page.getByRole("button", { name: "New payroll batch" })).toBeVisible();
-      await page.getByRole("button", { name: "New payroll batch" }).click();
+      await expect(page.getByRole("button", { name: "New payroll batch" })).toHaveCount(0);
+      await page.getByLabel("Site for payroll generation").selectOption("North Campus");
+      await page.getByRole("button", { name: "Preview Payroll" }).click();
+      await expect(page.getByRole("heading", { name: "Payroll preview" })).toBeVisible();
+      await page.getByRole("button", { name: "Close preview" }).click();
+      await page.getByRole("button", { name: "Generate Batch from Timesheets" }).click();
       const dialog = page.getByRole("dialog");
       await expect(dialog.getByText("Create payroll batch")).toBeVisible();
 
@@ -453,34 +482,51 @@ test("overview uses the available desktop width and offers immediate actions", a
   expect(contentWidth).toBeGreaterThan(1600);
 
   await page.getByRole("button", { name: "Record today’s attendance" }).click();
-  await expect(page.getByLabel("Attendance date")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Active projects" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Monthly entry", exact: true })).toBeVisible();
 });
 
-test("admin can create, submit, and approve a payroll batch", async ({ page }) => {
+test("admin can generate, submit, and approve a site payroll batch", async ({ page }) => {
   const backend = await mockPayrollBackend(page, "admin");
+  const month = new Date().toISOString().slice(0, 7);
+  backend.state.timesheets.push({
+    id: randomUUID(),
+    employee_id: 1,
+    site: "North Campus",
+    project_id: northCampusId,
+    foreman: "Samir Foreman",
+    foreman_user_id: foremanUserId,
+    work_date: `${month}-05`,
+    status: "PRESENT",
+    in_time: "06:00",
+    out_time: "14:00",
+    break_hours: 0,
+    overtime_hours: 0,
+    regular_hours: 8,
+    total_hours: 8,
+    remarks: null,
+    created_at: timestamp,
+  });
   backend.state.employee_salary_history.splice(0);
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto("/");
   await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
   await openTab(page, "Monthly Payroll", false);
-  await page.getByRole("button", { name: "New payroll batch" }).click();
-
+  await expect(page.getByRole("button", { name: "New payroll batch" })).toHaveCount(0);
+  await expect(page.getByLabel("Site for payroll generation")).toHaveValue("");
+  await expect(
+    page.getByLabel("Site for payroll generation").getByRole("option", { name: "East Yard" }),
+  ).toBeAttached();
+  await page.getByLabel("Site for payroll generation").selectOption("North Campus");
+  await page.getByRole("button", { name: "Generate Batch from Timesheets" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("Payroll project").selectOption("00000000-0000-4000-8000-000000000010");
-  await expect(dialog.getByLabel("Batch foreman")).toHaveValue(
-    "00000000-0000-4000-8000-000000000002",
-  );
-  await dialog.getByPlaceholder("Search name, trade or ID…").first().fill("Asha");
-  await page
-    .getByRole("button", { name: /Asha Khan/ })
-    .first()
-    .click();
   const row = dialog.locator("tbody tr").first();
   await expect(row.locator('input[type="number"]').nth(1)).toHaveValue("3");
   await row.locator('input[type="number"]').first().fill("160");
   await dialog.getByRole("button", { name: "Save batch" }).click();
 
-  await expect(page.getByText("North Campus")).toBeVisible();
+  const batchCard = page.locator(".mobile-batch-card").filter({ hasText: "North Campus" });
+  await expect(batchCard).toBeVisible();
   expect(backend.state.payroll_batches).toHaveLength(1);
   expect(backend.state.payroll_lines).toHaveLength(1);
   expect(backend.state.payroll_batches[0]?.["project_id"]).toBe(
@@ -491,12 +537,135 @@ test("admin can create, submit, and approve a payroll batch", async ({ page }) =
   );
 
   await page.getByRole("button", { name: "Submit review" }).click();
-  const batchCard = page.locator(".mobile-batch-card").filter({ hasText: "North Campus" });
   await expect(batchCard).toContainText("REVIEW");
   await page.getByRole("button", { name: "Approve" }).click();
   await expect(batchCard).toContainText("APPROVED");
   expect(backend.state.payroll_batches[0]?.["status"]).toBe("APPROVED");
   expect(backend.reads.get("payroll_batches")).toBe(1);
+});
+
+test("admin can preview payroll for one site and manually enter adv deduction", async ({
+  page,
+}) => {
+  const backend = await mockPayrollBackend(page, "admin");
+  const month = new Date().toISOString().slice(0, 7);
+  backend.state.employees.push({
+    id: 2,
+    name: "Bilal Noor",
+    trade: "HELPER",
+    id_number: "E-002",
+    hourly_rate: 4,
+    default_food_deduction: 0,
+    status: "Active",
+    created_at: timestamp,
+  });
+  backend.state.employee_salary_history.push({
+    id: randomUUID(),
+    employee_id: 2,
+    hourly_rate: 4,
+    effective_on: `${month}-01`,
+    created_at: timestamp,
+  });
+  backend.state.timesheets.push(
+    {
+      id: randomUUID(),
+      employee_id: 1,
+      site: "North Campus",
+      project_id: northCampusId,
+      foreman: "Samir Foreman",
+      foreman_user_id: foremanUserId,
+      work_date: `${month}-01`,
+      status: "PRESENT",
+      regular_hours: 8,
+      overtime_hours: 0,
+    },
+    {
+      id: randomUUID(),
+      employee_id: 2,
+      site: "East Yard",
+      project_id: "00000000-0000-4000-8000-000000000011",
+      foreman: "",
+      foreman_user_id: null,
+      work_date: `${month}-01`,
+      status: "PRESENT",
+      regular_hours: 8,
+      overtime_hours: 0,
+    },
+  );
+
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto("/");
+  await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
+  await openTab(page, "Monthly Payroll", false);
+  await page.getByLabel("Site for payroll generation").selectOption("North Campus");
+  await page.getByRole("button", { name: "Preview Payroll" }).click();
+
+  const preview = page.getByText("Payroll preview").locator("..").locator("..").locator("..");
+  await expect(preview).toContainText("North Campus");
+  await expect(preview).toContainText("Asha Khan");
+  await expect(preview).not.toContainText("Bilal Noor");
+  for (const column of [
+    "Base",
+    "OT",
+    "Food deduction",
+    "Allowances",
+    "Net pay",
+    "Days worked",
+    "Site",
+  ]) {
+    await expect(preview.getByRole("columnheader", { name: column })).toBeVisible();
+  }
+  await expect(preview).toContainText("1");
+  await preview.getByRole("button", { name: "Generate payroll" }).click();
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Payroll project")).toHaveValue(northCampusId);
+  const employeeRow = dialog.locator("tbody tr").first();
+  await expect(employeeRow.locator('input[type="number"]').nth(3)).toHaveValue("");
+  await expect(dialog.getByRole("columnheader", { name: "Adv deduction" })).toBeVisible();
+});
+
+test("employee creation rejects duplicate IDs and applies the configured food default", async ({
+  page,
+}) => {
+  const backend = await mockPayrollBackend(page, "admin");
+  backend.state.payroll_settings[0]!["default_food_deduction"] = 5;
+  await page.goto("/");
+  await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
+  await openTab(page, "Employees", false);
+  await page.getByText("New employee", { exact: true }).click();
+
+  const modal = page.locator(".mobile-sheet");
+  await modal.getByLabel("Full name").fill("Duplicate Worker");
+  await modal.getByLabel("ID number").fill("e-001");
+  await modal.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("Employee ID already exists");
+  expect(backend.state.employees).toHaveLength(1);
+
+  await page.getByRole("alertdialog").getByRole("button", { name: "Close" }).click();
+  await modal.getByLabel("ID number").fill("E-003");
+  await modal.getByRole("checkbox", { name: "Food deduction" }).check();
+  await expect(modal.getByLabel("Food deduction amount (OMR)")).toHaveValue("5");
+  await modal.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByRole("cell", { name: "Duplicate Worker", exact: true })).toBeVisible();
+  expect(backend.state.employees).toHaveLength(2);
+  expect(backend.state.employees[1]?.["default_food_deduction"]).toBe(5);
+});
+
+test("authorized admin gets the private delete page and full admin access", async ({ page }) => {
+  await mockPayrollBackend(page, "admin", false, "iqbalussain@gmail.com");
+  await page.goto("/");
+  await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
+
+  await expect(page.getByRole("button", { name: "Delete records" })).toBeVisible();
+  for (const label of ["Overview", "Employees", "Monthly Payroll", "Managing", "Diagnostics"]) {
+    await expect(page.getByRole("button", { name: label })).toBeVisible();
+  }
+  await expect(page.getByRole("button", { name: "Add passkey" })).toBeVisible();
+  await openTab(page, "Employees", false);
+  await expect(page.getByRole("button", { name: "New employee" })).toBeVisible();
+  await openTab(page, "Delete records", false);
+  await expect(page.getByRole("heading", { name: "Delete records" })).toBeVisible();
 });
 
 test("salary slip selection persists when filtering employees", async ({ page }) => {
@@ -562,20 +731,29 @@ test("salary slip selection persists when filtering employees", async ({ page })
 });
 
 test("payroll save errors include the database message", async ({ page }) => {
-  await mockPayrollBackend(page, "admin", true);
+  const backend = await mockPayrollBackend(page, "admin", true);
+  const month = new Date().toISOString().slice(0, 7);
+  backend.state.timesheets.push({
+    id: randomUUID(),
+    employee_id: 1,
+    site: "North Campus",
+    project_id: northCampusId,
+    foreman: "Samir Foreman",
+    foreman_user_id: foremanUserId,
+    work_date: `${month}-05`,
+    status: "PRESENT",
+    regular_hours: 8,
+    overtime_hours: 0,
+  });
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto("/");
   await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
   await openTab(page, "Monthly Payroll", false);
-  await page.getByRole("button", { name: "New payroll batch" }).click();
+  await expect(page.getByRole("button", { name: "Delete records" })).toHaveCount(0);
+  await page.getByLabel("Site for payroll generation").selectOption("North Campus");
+  await page.getByRole("button", { name: "Generate Batch from Timesheets" }).click();
 
   const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("Payroll project").selectOption("00000000-0000-4000-8000-000000000010");
-  await dialog.getByPlaceholder("Search name, trade or ID…").first().fill("Asha");
-  await page
-    .getByRole("button", { name: /Asha Khan/ })
-    .first()
-    .click();
   await dialog.locator("tbody tr").first().locator('input[type="number"]').first().fill("160");
   await dialog.getByRole("button", { name: "Save batch" }).click();
 
@@ -722,7 +900,7 @@ test("admin can open a finalized payroll batch for editing", async ({ page }) =>
   await expect(dialog.getByText("Edit payroll batch")).toBeVisible();
   await dialog.getByLabel("Payroll project").selectOption("00000000-0000-4000-8000-000000000011");
   await dialog.getByRole("button", { name: "Save batch" }).click();
-  await expect(page.getByText("East Yard")).toBeVisible();
+  await expect(page.locator(".mobile-batch-card").filter({ hasText: "East Yard" })).toBeVisible();
   expect(backend.state.payroll_batches[0]?.["status"]).toBe("APPROVED");
   expect(backend.state.payroll_batches[0]?.["project_id"]).toBe(
     "00000000-0000-4000-8000-000000000011",
@@ -734,6 +912,15 @@ test("daily timesheet date changes keep the editor open and load the same batch"
   page,
 }) => {
   const backend = await mockPayrollBackend(page, "admin");
+  backend.state.employee_site_assignments.push({
+    employee_id: 1,
+    site: "North Campus",
+    foreman: "Samir Foreman",
+    project_id: northCampusId,
+    foreman_user_id: foremanUserId,
+    effective_from: "2020-01-01",
+    effective_to: null,
+  });
   const current = new Date();
   const formatDate = (date: Date) =>
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -761,15 +948,116 @@ test("daily timesheet date changes keep the editor open and load the same batch"
   await page.goto("/");
   await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
   await openTab(page, "Daily Timesheets", false);
-  await page.getByRole("button", { name: "Edit batch" }).click();
-  await expect(page.getByText("Editing saved attendance batch")).toBeVisible();
+  await page.getByRole("button", { name: /North Campus/ }).click();
+  await expect(page.getByRole("dialog", { name: "Daily timesheet editor" })).toBeVisible();
+  await expect(page.getByLabel("Attendance date")).toHaveValue(sourceDate);
   await page.getByLabel("Attendance date").fill(nextDate);
 
   await expect(page.getByLabel("Attendance date")).toHaveValue(nextDate);
-  await expect(page.getByText("Editing saved attendance batch")).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Daily timesheet editor" })).toBeVisible();
   await expect(page.getByLabel("Site / project")).toHaveValue(northCampusId);
-  await expect(page.getByLabel("Foreman")).toHaveValue("legacy:Samir");
+  await expect(page.getByLabel("Foreman")).toHaveValue(foremanUserId);
 });
+
+for (const transferDay of [1, 16]) {
+  test(`monthly deployment overrides old attendance from day ${transferDay}`, async ({ page }) => {
+    const backend = await mockPayrollBackend(page, "admin");
+    const month = new Date().toISOString().slice(0, 7);
+    const eastId = "00000000-0000-4000-8000-000000000011";
+    const oldDay = {
+      id: randomUUID(), employee_id: 1, work_date: `${month}-02`,
+      site: "North Campus", project_id: northCampusId,
+      foreman: "Samir Foreman", foreman_user_id: foremanUserId,
+      status: "PRESENT", in_time: "08:00", out_time: "16:00",
+      total_hours: 8, regular_hours: 8, overtime_hours: 0, break_hours: 0,
+      created_at: timestamp,
+    };
+    backend.state.timesheets.push(oldDay);
+    backend.state.employee_site_assignments.push(
+      { employee_id: 1, site: "North Campus", project_id: northCampusId,
+        foreman: "Samir Foreman", foreman_user_id: foremanUserId,
+        effective_from: "2020-01-01", effective_to: `${month}-${String(transferDay - 1 || 1).padStart(2, "0")}` },
+      { employee_id: 1, site: "East Yard", project_id: eastId,
+        foreman: "", foreman_user_id: null,
+        effective_from: `${month}-${String(transferDay).padStart(2, "0")}`, effective_to: null },
+    );
+    // The previous-month lookup returns an old site, just as the real API does.
+    await page.route(`${supabaseUrl}/rest/v1/timesheets**`, async (route) => {
+      const url = new URL(route.request().url());
+      if (route.request().method() === "GET" && url.searchParams.has("employee_id") && url.searchParams.has("limit")) {
+        await route.fulfill({ json: { ...oldDay, work_date: "2020-01-01" } });
+      } else await route.fallback();
+    });
+    await page.setViewportSize({ width: 1280, height: 1800 });
+    await page.goto("/");
+    await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
+    await openTab(page, "Daily Timesheets", false);
+    await page.getByRole("button", { name: "Monthly entry", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Search employee").fill("Asha");
+    await dialog.getByRole("button", { name: /Asha Khan/ }).click();
+    await expect(dialog.getByLabel("Day 2 site", { exact: true })).toHaveValue(northCampusId);
+    if (transferDay === 16) {
+      await expect(dialog.getByLabel("Day 10 site", { exact: true })).toHaveValue(northCampusId);
+      await expect(dialog.getByLabel("Day 15 site", { exact: true })).toHaveValue(northCampusId);
+    }
+    await expect(dialog.getByLabel("Day 20 site", { exact: true })).toHaveValue(eastId);
+    await expect(dialog.getByLabel("Day 20 foreman", { exact: true })).toHaveValue("");
+    await dialog.getByLabel("Day 20 status", { exact: true }).selectOption("PRESENT");
+    await dialog.getByLabel("Day 20 foreman", { exact: true }).selectOption(foremanUserId);
+    await dialog.getByRole("button", { name: "Save Individual Attendance" }).click();
+    await expect(dialog).toBeHidden();
+    expect(backend.state.timesheets.find((row) => row["work_date"] === `${month}-20`)?.["project_id"]).toBe(eastId);
+    expect(oldDay.project_id).toBe(northCampusId);
+    await page.getByRole("button", { name: "Monthly entry", exact: true }).click();
+    await dialog.getByLabel("Search employee").fill("Asha");
+    await dialog.getByRole("button", { name: /Asha Khan/ }).click();
+    await expect(dialog.getByLabel("Day 20 site", { exact: true })).toHaveValue(eastId);
+    await expect(dialog.getByLabel("Day 20 foreman", { exact: true })).toHaveValue(foremanUserId);
+    await dialog.getByLabel("Day 20 site", { exact: true }).screenshot({ path: `/tmp/browser/monitoring-tests/transfer-${transferDay}.png` });
+  });
+}
+
+for (const scenario of [
+  { prior: 10, profile: 0, expected: 10 },
+  { prior: 0, profile: 5, expected: 0 },
+  { prior: null, profile: 0, expected: 0 },
+  { prior: null, profile: 5, expected: 5 },
+]) {
+  test(`generated food deduction prior ${scenario.prior} profile ${scenario.profile}`, async ({ page }) => {
+    const backend = await mockPayrollBackend(page, "admin");
+    const now = new Date();
+    const month = now.toISOString().slice(0, 7);
+    const priorMonth = new Date(Date.UTC(now.getFullYear(), now.getMonth() - 1, 1)).toISOString().slice(0, 7);
+    const batchId = randomUUID();
+    const employee = backend.state.employees[0];
+    if (!employee) throw new Error("Missing test employee");
+    employee["default_food_deduction"] = scenario.profile;
+    backend.state.payroll_settings[0] = { singleton: true, default_food_deduction: 7 };
+    backend.state.employee_salary_history.splice(0);
+    if (scenario.prior !== null) {
+      backend.state.payroll_batches.push({ id: batchId, month: priorMonth, site: "North Campus", status: "APPROVED", created_at: timestamp });
+      backend.state.payroll_lines.push({ id: randomUUID(), batch_id: batchId, month: priorMonth, employee_id: 1,
+        hours: 8, rate: 3, food_deduction: scenario.prior, prev_advance: 0, new_advance: 0,
+        other_deduction: 0, net_salary: 24 - scenario.prior, paid: 0 });
+    }
+    backend.state.timesheets.push({ id: randomUUID(), employee_id: 1, work_date: `${month}-05`,
+      site: "North Campus", project_id: northCampusId, foreman: "Samir Foreman", foreman_user_id: foremanUserId,
+      status: "PRESENT", regular_hours: 8, overtime_hours: 0, total_hours: 8 });
+    await page.setViewportSize({ width: 1280, height: 1800 });
+    await page.goto("/");
+    await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
+    await openTab(page, "Monthly Payroll", false);
+    await page.getByRole("button", { name: "Generate Batch from Timesheets" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.locator('tbody tr input[type="number"]').nth(2)).toHaveValue(String(scenario.expected));
+    await dialog.getByRole("button", { name: "Save batch" }).click();
+    await expect(dialog).toBeHidden();
+    const saved = backend.state.payroll_lines.find((line) => line["batch_id"] !== batchId);
+    expect(saved?.["food_deduction"]).toBe(scenario.expected);
+    expect(saved?.["net_pay"]).toBe(24 - scenario.expected);
+  });
+}
 
 test("monthly attendance entry saves only days with a selected status", async ({
   page,
@@ -977,7 +1265,7 @@ test("daily timesheet switches between table and mobile employee cards", async (
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(table).toHaveCount(0);
   await expect(page.getByLabel("Asha Khan status")).toBeVisible();
-  await expect(page.getByLabel("Asha Khan overtime hours")).toBeVisible();
+  await expect(page.getByLabel("Asha Khan clock-in time")).toBeVisible();
   const employeeName = page
     .getByLabel("Asha Khan status")
     .locator("xpath=ancestor::article")
@@ -1084,6 +1372,7 @@ test("attendance report shows daily hours and hover details in the site matrix",
   await openTab(page, "Attendance Report", false);
   await expect(page.getByRole("heading", { name: "Attendance report" })).toBeVisible();
   await page.getByRole("button", { name: "Filter by site" }).click();
+  await expect(page.getByLabel("Site").getByRole("option", { name: "East Yard" })).toBeAttached();
   await page.getByLabel("Site").selectOption({ label: "North Campus" });
 
   await expect(page.getByText("10.5", { exact: true })).toBeVisible();
@@ -1114,6 +1403,19 @@ test("Supabase Realtime updates Dexie without another table fetch", async ({ pag
 
 test("HR can prepare payroll but does not get approval or deletion controls", async ({ page }) => {
   const backend = await mockPayrollBackend(page, "hr");
+  const month = new Date().toISOString().slice(0, 7);
+  backend.state.timesheets.push({
+    id: randomUUID(),
+    employee_id: 1,
+    site: "North Campus",
+    project_id: northCampusId,
+    foreman: "Samir Foreman",
+    foreman_user_id: foremanUserId,
+    work_date: `${month}-05`,
+    status: "PRESENT",
+    regular_hours: 8,
+    overtime_hours: 0,
+  });
   backend.state.payroll_batches.push({
     id: "review-1",
     month: new Date().toISOString().slice(0, 7),
@@ -1132,9 +1434,13 @@ test("HR can prepare payroll but does not get approval or deletion controls", as
   await page.goto("/");
   await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
   await openTab(page, "Monthly Payroll", false);
-  await page.getByRole("button", { name: "New payroll batch" }).click();
-  await expect(page.getByRole("button", { name: "Save batch" })).toBeVisible();
-  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("button", { name: "Delete records" })).toHaveCount(0);
+  await page.getByLabel("Site for payroll generation").selectOption("North Campus");
+  await page.getByRole("button", { name: "Generate Batch from Timesheets" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("button", { name: "Save batch" })).toBeVisible();
+  await dialog.locator("tbody tr").first().locator('input[type="number"]').first().fill("160");
+  await dialog.getByRole("button", { name: "Save batch" }).click();
   await expect(page.getByText("Review site")).toBeVisible();
   await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Submit review" })).toHaveCount(0);

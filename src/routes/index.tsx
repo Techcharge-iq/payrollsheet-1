@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart2,
   CheckCircle2,
@@ -24,6 +24,8 @@ import {
   X,
   UserRound,
   Stethoscope,
+  Trash2,
+  MapPin,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 
@@ -86,6 +88,16 @@ const ManagementTab = lazy(() =>
     default: module.ManagementTab,
   })),
 );
+const DeleteOnlyTab = lazy(() =>
+  import("@/components/payroll/DeleteOnlyTab").then((module) => ({
+    default: module.DeleteOnlyTab,
+  })),
+);
+const SiteMap = lazy(() =>
+  import("@/components/sites/SiteMap").then((module) => ({
+    default: module.SiteMap,
+  })),
+);
 import {
   EmployeeModal,
   type EmployeeForm,
@@ -112,14 +124,8 @@ import {
   useSaveTimesheets,
   useUpdateBatchStatus,
 } from "@/lib/payroll-data";
-import type {
-  AdvanceTx,
-  Employee,
-  EmployeeStatus,
-  PayrollBatch,
-  PayrollBatchStatus,
-} from "@/lib/payroll";
-import { db } from "@/integrations/supabase/external-client";
+import type { AdvanceTx, Employee, PayrollBatch, PayrollBatchStatus } from "@/lib/payroll";
+import { db, dbAny } from "@/integrations/supabase/external-client";
 import { clearPayrollCacheUser, initializePayrollCache } from "@/lib/payroll-cache";
 
 const TITLE = "Site Payroll Manager — Wages, Advances & Salary Slips";
@@ -147,6 +153,7 @@ const TABS = [
   { id: "payroll", label: "Monthly Payroll", icon: Save },
   { id: "timesheets", label: "Daily Timesheets", icon: Clock3 },
   { id: "attendance", label: "Attendance Report", icon: CalendarDays },
+  { id: "sites", label: "GIS Site Map", icon: MapPin },
   { id: "advances", label: "Advances", icon: Banknote },
   { id: "history", label: "Employee History", icon: History },
   { id: "slips", label: "Salary Slips", icon: FileDown },
@@ -155,6 +162,7 @@ const TABS = [
   { id: "audit", label: "Audit Log", icon: ClipboardList, adminOnly: true },
   { id: "managing", label: "Managing", icon: UserRound, adminOnly: true },
   { id: "diagnostics", label: "Diagnostics", icon: Stethoscope, adminOnly: true },
+  { id: "deletions", label: "Delete records", icon: Trash2, deleteOnly: true },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -164,6 +172,8 @@ const emptyForm: EmployeeForm = {
   trade: "HELPER",
   id_number: "",
   hourly_rate: "",
+  default_food_deduction: "",
+  food_deduction_enabled: false,
   status: "Active",
 };
 
@@ -280,9 +290,12 @@ function Dashboard({
   userId: string;
 }) {
   const queryClient = useQueryClient();
+  const canAccessDeletePage = email.trim().toLowerCase() === "iqbalussain@gmail.com";
   const [tab, setTab] = useState<TabId>(role === "foreman" ? "timesheets" : "overview");
+  const [timesheetMode, setTimesheetMode] = useState<"manual" | "photo">("manual");
   const [mode, setMode] = useState<ModalMode>(null);
   const [form, setForm] = useState<EmployeeForm>(emptyForm);
+  const [duplicateIdError, setDuplicateIdError] = useState("");
   const [toast, setToast] = useState<{ msg: string; tone: "ok" | "warn" } | null>(null);
   const [registeringPasskey, setRegisteringPasskey] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
@@ -296,13 +309,45 @@ function Dashboard({
   const cacheReady = cacheState === "ready";
   const employeesQuery = useEmployees(cacheReady);
   const needsPayrollHistory =
-    ["overview", "history", "slips", "advances"].includes(tab) || mode !== null;
+    ["overview", "history", "slips", "advances", "deletions"].includes(tab) || mode !== null;
   const batchesQuery = useBatches(undefined, cacheReady && needsPayrollHistory);
   const saveEmployee = useSaveEmployee();
   const canDelete = role === "admin";
+  const foodSettingsQuery = useQuery({
+    queryKey: ["payroll_settings", "default_food_deduction"],
+    enabled: cacheReady && ["admin", "hr"].includes(role),
+    queryFn: async () => {
+      const { data, error } = await dbAny
+        .from("payroll_settings")
+        .select("default_food_deduction")
+        .eq("singleton", true)
+        .maybeSingle();
+      if (error) throw error;
+      return Number(
+        (data as { default_food_deduction?: number | null } | null)?.default_food_deduction ?? 0,
+      );
+    },
+  });
+  const saveFoodDefault = useMutation({
+    mutationFn: async (value: number) => {
+      if (!Number.isFinite(value) || value < 0) {
+        throw new Error("Food deduction default must be zero or greater.");
+      }
+      const { error } = await dbAny
+        .from("payroll_settings")
+        .update({ default_food_deduction: value })
+        .eq("singleton", true);
+      if (error) throw error;
+    },
+    onSuccess: () =>
+      void queryClient.invalidateQueries({
+        queryKey: ["payroll_settings", "default_food_deduction"],
+      }),
+  });
   const availableTabs = TABS.filter((item) => {
+    if ("deleteOnly" in item && item.deleteOnly) return canAccessDeletePage;
     if ("adminOnly" in item && item.adminOnly && !canDelete) return false;
-    if (role === "foreman") return item.id === "timesheets" || item.id === "workforce";
+    if (role === "foreman") return item.id === "timesheets" || item.id === "workforce" || item.id === "sites";
     if (role === "manager") {
       return [
         "overview",
@@ -310,6 +355,7 @@ function Dashboard({
         "payroll",
         "timesheets",
         "attendance",
+        "sites",
         "advances",
         "history",
         "slips",
@@ -402,12 +448,15 @@ function Dashboard({
   }, [toast]);
 
   const openFor = (employee: Employee, next: ModalMode) => {
+    setDuplicateIdError("");
     setForm({
       id: employee.id,
       name: employee.name,
       trade: employee.trade,
       id_number: employee.id_number,
       hourly_rate: employee.hourly_rate,
+      default_food_deduction: employee.default_food_deduction,
+      food_deduction_enabled: Number(employee.default_food_deduction) > 0,
       status: employee.status,
     });
     setMode(next);
@@ -418,6 +467,20 @@ function Dashboard({
       notify("Employee name is required.", "warn");
       return;
     }
+    const normalizedId = form.id_number.trim().toLowerCase();
+    const duplicate = normalizedId
+      ? employees.find(
+          (employee) =>
+            employee.id !== form.id && employee.id_number.trim().toLowerCase() === normalizedId,
+        )
+      : undefined;
+    if (duplicate) {
+      setDuplicateIdError(
+        `ID “${form.id_number.trim()}” is already assigned to ${duplicate.name} (employee #${duplicate.id}). Choose a unique ID number.`,
+      );
+      return;
+    }
+    setDuplicateIdError("");
     saveEmployee.mutate(
       {
         ...(form.id ? { id: form.id } : {}),
@@ -425,19 +488,35 @@ function Dashboard({
         trade: form.trade,
         id_number: form.id_number,
         hourly_rate: Number(form.hourly_rate) || 0,
+        default_food_deduction: Number(form.default_food_deduction) || 0,
         status: form.status,
       },
       {
         onSuccess: () => {
           notify(`${form.name.trim()} ${form.id ? "updated" : "added"}.`);
+          setDuplicateIdError("");
           setMode(null);
         },
-        onError: (e) => notify((e as Error).message, "warn"),
+        onError: (error) => {
+          const saveError = error as Error & { code?: string };
+          const message = saveError.message || "Could not save employee.";
+          if (
+            saveError.code === "23505" ||
+            /employees_id_number_normalized_unique_idx/i.test(message)
+          ) {
+            setDuplicateIdError(
+              `ID “${form.id_number.trim()}” is already assigned to another employee. Choose a unique ID number.`,
+            );
+            return;
+          }
+          notify(message, "warn");
+        },
       },
     );
   };
 
-  const error = employeesQuery.error ?? batchesQuery.error ?? advancesQuery.error;
+  const error =
+    employeesQuery.error ?? batchesQuery.error ?? advancesQuery.error ?? foodSettingsQuery.error;
   const commandActions = useMemo(
     () =>
       [
@@ -458,6 +537,13 @@ function Dashboard({
           description: "Review the employee master list",
           shortcut: "E",
           action: () => navigateToTab("employees"),
+        },
+        {
+          id: "deletions",
+          label: "Delete payroll, sites, and employees",
+          description: "Open the restricted deletion screen",
+          shortcut: "D",
+          action: () => navigateToTab("deletions"),
         },
         {
           id: "payroll",
@@ -569,7 +655,7 @@ function Dashboard({
             The app could not refresh its local data from Supabase. Check your connection and retry.
           </p>
           {cacheError && (
-            <p className="mt-2 break-words text-xs text-danger" role="alert">
+            <p className="mt-2 wrap-break-word text-xs text-danger" role="alert">
               {cacheError}
             </p>
           )}
@@ -701,7 +787,14 @@ function Dashboard({
                 batches={batches}
                 advances={advances}
                 email={email}
-                onRecordAttendance={() => navigateToTab("timesheets")}
+                onRecordAttendance={() => {
+                  setTimesheetMode("manual");
+                  navigateToTab("timesheets");
+                }}
+                onCameraIntake={() => {
+                  setTimesheetMode("photo");
+                  navigateToTab("timesheets");
+                }}
                 onCreatePayroll={() => navigateToTab("payroll")}
                 onNewEmployee={() => {
                   setForm(emptyForm);
@@ -720,12 +813,14 @@ function Dashboard({
                 onSave={(rows) => saveTimesheets.mutateAsync(rows)}
                 onOpenWorkforce={() => navigateToTab("workforce")}
                 notify={notify}
+                initialMode={timesheetMode}
                 onDirtyChange={(dirty) => {
                   attendanceDirtyRef.current = dirty;
                 }}
               />
             )}
             {tab === "attendance" && <AttendanceReportTab employees={employees} />}
+            {tab === "sites" && <SiteMap />}
             {tab === "workforce" && (
               <WorkforceTab employees={employees} role={role} notify={notify} />
             )}
@@ -734,6 +829,7 @@ function Dashboard({
                 employees={employees}
                 batches={batches}
                 loading={employeesQuery.isLoading}
+                notify={notify}
                 onNew={() => {
                   setForm(emptyForm);
                   setMode("new");
@@ -749,6 +845,22 @@ function Dashboard({
                 advances={advances}
                 saving={saveBatch.isPending}
                 canDelete={canDelete}
+                defaultFoodDeduction={foodSettingsQuery.data ?? 0}
+                savingFoodDeductionDefault={saveFoodDefault.isPending}
+                canManageFoodDeductionDefault={role === "admin"}
+                onDefaultFoodDeductionChange={async (value) => {
+                  try {
+                    await saveFoodDefault.mutateAsync(value);
+                    notify("Default food deduction updated.");
+                  } catch (error) {
+                    notify(
+                      error instanceof Error
+                        ? error.message
+                        : "Could not update food deduction default.",
+                      "warn",
+                    );
+                  }
+                }}
                 notify={notify}
                 onNewEmployee={() => {
                   setForm(emptyForm);
@@ -811,6 +923,17 @@ function Dashboard({
             {tab === "audit" && canDelete && <AuditHistoryTab />}
             {tab === "managing" && canDelete && <ManagementTab currentUserId={userId} />}
             {tab === "diagnostics" && canDelete && <DiagnosticsTab />}
+            {tab === "deletions" && canAccessDeletePage && (
+              <DeleteOnlyTab
+                employees={employees}
+                batches={batches}
+                onDeleted={(message) => {
+                  void queryClient.invalidateQueries();
+                  notify(message);
+                }}
+                onError={(message) => notify(message, "warn")}
+              />
+            )}
           </main>
         </Suspense>
 
@@ -857,9 +980,13 @@ function Dashboard({
       <EmployeeModal
         mode={mode}
         form={form}
+        saving={saveEmployee.isPending}
+        defaultFoodDeduction={foodSettingsQuery.data ?? 0}
+        duplicateIdError={duplicateIdError}
+        onDismissDuplicateIdError={() => setDuplicateIdError("")}
         batches={batches}
         advances={advances}
-        onChange={(field, value) => setForm((f) => ({ ...f, [field]: value as EmployeeStatus }))}
+        onChange={(field, value) => setForm((current) => ({ ...current, [field]: value }))}
         onClose={() => setMode(null)}
         onSubmit={submitEmployee}
         onSwitchToEdit={() => setMode("edit")}
@@ -867,7 +994,7 @@ function Dashboard({
 
       {toast && (
         <div
-          className={`fixed bottom-24 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg sm:bottom-5 ${
+          className={`fixed bottom-24 left-1/2 z-60 flex -translate-x-1/2 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg sm:bottom-5 ${
             toast.tone === "warn" ? "bg-danger" : "bg-money"
           }`}
         >

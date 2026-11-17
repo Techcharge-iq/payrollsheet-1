@@ -58,6 +58,11 @@ export function brokeredPreviewStorage(): PreviewAuthStorage | undefined {
         "^(?:id-preview(?:-[a-z0-9]+)?|project)--(" + UUID + ")(?:-dev)?(?=\\.|$)",
         "i",
       ).exec(host)?.[1] ?? new RegExp("^(" + UUID + ")(?=[.-])", "i").exec(host)?.[1])
+  const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+  const projectId = onPreviewZone
+    ? (new RegExp('^(?:id-preview(?:-[a-z0-9]+)?|project)--(' + UUID + ')(?:-dev)?(?=\\.|$)', 'i').exec(host)?.[1]
+        ?? new RegExp('^live--(' + UUID + ')(?:-thr_[a-z0-9]+)?(?=\\.|$)', 'i').exec(host)?.[1]
+        ?? new RegExp('^(' + UUID + ')(?=[.-])', 'i').exec(host)?.[1])
     : undefined;
   // lib.dom types window.parent and location.ancestorOrigins as always set, but a
   // detached frame has no parent and not every browser implements ancestorOrigins.

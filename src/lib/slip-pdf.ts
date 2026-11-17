@@ -204,6 +204,7 @@ function drawCard(
 }
 
 function drawSlip(doc: jsPDF, slip: SlipInput, headerImage: HeaderImage, qrCode: string) {
+async function drawSlip(doc: jsPDF, slip: SlipInput, headerImage: HeaderImage) {
   const { employee: e, month, row } = slip;
   const pageWidth = 210;
   const left = 15;
@@ -289,7 +290,7 @@ function drawSlip(doc: jsPDF, slip: SlipInput, headerImage: HeaderImage, qrCode:
     cardWidth,
     [
       { label: "FOOD DEDUCT", value: money(food) },
-      { label: "ADVANCE RECOVERED", value: money(advanceRecovered) },
+      { label: "ADV DEDUCTION", value: money(advanceRecovered) },
       { label: "OTHER DEDUCT", value: money(other) },
     ],
     { label: "TOTAL DEDUCT", value: money(totalDeductions) },
@@ -343,6 +344,34 @@ function drawSlip(doc: jsPDF, slip: SlipInput, headerImage: HeaderImage, qrCode:
     detailsY + 20.5,
     "right",
   );
+
+  // In-memory verification QR code on lower right corner
+  try {
+    const qrPayload = JSON.stringify({
+      emp_id: Number(slip.employee.id),
+      period: slip.month,
+      net_pay_omr: Number(net.toFixed(3)),
+      advance_balance: Number(slip.outstandingAdvance.toFixed(3)),
+    });
+    const qrDataUrl = await QRCode.toDataURL(qrPayload, {
+      margin: 1,
+      width: 120,
+      color: {
+        dark: "#181d23",
+        light: "#ffffff",
+      },
+    });
+
+    const qrSize = 23;
+    const qrX = left + contentWidth - qrSize;
+    const qrY = 217;
+    doc.addImage(qrDataUrl, "PNG", qrX, qrY, qrSize, qrSize);
+    doc.setFontSize(5.5);
+    doc.setTextColor(...MUTED);
+    doc.text("SCAN TO VERIFY", qrX + qrSize / 2, qrY + qrSize + 2.5, { align: "center" });
+  } catch (err) {
+    console.warn("Could not render salary slip QR code:", err);
+  }
 
   doc.setDrawColor(150, 156, 163);
   doc.setLineWidth(0.35);
@@ -399,6 +428,7 @@ export async function generateSalarySlipPDF(slip: SlipInput, headerImage?: Heade
     { errorCorrectionLevel: "M", margin: 1, width: 128 },
   );
   drawSlip(doc, slip, resolvedHeaderImage, qrCode);
+  await drawSlip(doc, slip, resolvedHeaderImage);
   return doc.output("blob");
 }
 

@@ -7,10 +7,13 @@ import {
   Check,
   ChevronDown,
   Copy,
+  LoaderCircle,
   MapPin,
   Pencil,
   Plus,
+  Printer,
   Search,
+  Save,
   Trash2,
   Users,
   X,
@@ -18,7 +21,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import type { Employee } from "@/lib/payroll";
 import { dbAny } from "@/integrations/supabase/external-client";
-import { useTimesheetsForDate, type TimesheetRecord } from "@/lib/payroll-data";
+import { useBatches, useTimesheetsForDate, type TimesheetRecord } from "@/lib/payroll-data";
 import { useProjects, type Project } from "@/lib/management-data";
 import { projectAccessError } from "@/lib/project-access";
 import { AttendanceView } from "@/components/attendance/AttendanceView";
@@ -39,6 +42,7 @@ interface Props {
   onOpenWorkforce: () => void;
   notify: (message: string, tone?: "ok" | "warn") => void;
   onDirtyChange?: (dirty: boolean) => void;
+  initialMode?: "manual" | "photo";
 }
 
 type AttendanceStatus = TimesheetRecord["status"];
@@ -205,7 +209,7 @@ function MobileAttendanceCard({
             disabled={assignedExisting}
             onChange={onSelect}
             aria-label={`Select ${employee.name}`}
-            className="mt-1 h-4 w-4 shrink-0 accent-[var(--navy)] disabled:opacity-50"
+            className="mt-1 h-4 w-4 shrink-0 accent-navy disabled:opacity-50"
           />
           <div className="min-w-0 flex-1">
             <p className="whitespace-normal text-sm font-semibold leading-snug text-navy">
@@ -326,11 +330,13 @@ export function TimesheetsTab({
   onOpenWorkforce,
   notify,
   onDirtyChange,
+  initialMode,
 }: Props) {
   const isMobile = useIsMobile();
   const [workDate, setWorkDate] = useState(today);
   const previousDate = previousCalendarDate(workDate);
   const timesheetsQuery = useTimesheetsForDate(workDate);
+  const payrollMonthQuery = useBatches(workDate.slice(0, 7), role !== "foreman");
   const projectsQuery = useProjects(true);
   const foremenQuery = useQuery({
     queryKey: ["management", "timesheet-foremen"],
@@ -431,7 +437,10 @@ export function TimesheetsTab({
   const [attendanceStatusFilter, setAttendanceStatusFilter] = useState<AttendanceStatus | "">("");
   const [copyPickerOpen, setCopyPickerOpen] = useState(false);
   const [monthlyAttendanceOpen, setMonthlyAttendanceOpen] = useState(false);
-  const [attendanceMode, setAttendanceMode] = useState<"manual" | "photo">("manual");
+  const [attendanceMode, setAttendanceMode] = useState<"manual" | "photo">(initialMode || "manual");
+  useEffect(() => {
+    if (initialMode) setAttendanceMode(initialMode);
+  }, [initialMode]);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [bulkInTime, setBulkInTime] = useState("06:00");
   const [bulkOutTime, setBulkOutTime] = useState("17:00");
@@ -463,6 +472,29 @@ export function TimesheetsTab({
   );
   const savedBatches = useMemo(() => batchGroups(timesheets), [timesheets]);
   const previousBatches = useMemo(() => batchGroups(previousEntries), [previousEntries]);
+  const deductionsByEmployee = useMemo(() => {
+    const result = new Map<string, number>();
+    for (const batch of payrollMonthQuery.data ?? []) {
+      for (const line of batch.lines) {
+        const key = String(Number(line.employee_id));
+        result.set(
+          key,
+          (result.get(key) ?? 0) +
+            Number(line.food_deduction || 0) +
+            Number(line.prev_advance || 0) +
+            Number(line.other_deduction || 0),
+        );
+      }
+    }
+    return result;
+  }, [payrollMonthQuery.data]);
+  const batchDeductions = (entries: TimesheetRecord[]) => {
+    const uniqueEmployees = new Set(entries.map((entry) => String(entry.employee_id)));
+    return [...uniqueEmployees].reduce(
+      (total, key) => total + (deductionsByEmployee.get(key) ?? 0),
+      0,
+    );
+  };
   const assignedProjects = useMemo(
     () => projects.filter((project) => project.foreman_user_id === currentUserId),
     [currentUserId, projects],
@@ -1134,6 +1166,7 @@ export function TimesheetsTab({
   };
 
   const saveBatch = async () => {
+    if (saving) return;
     const cleanSite = site.trim();
     const cleanForeman = foreman.trim();
     if (!cleanSite || !cleanForeman) {
@@ -1416,6 +1449,7 @@ export function TimesheetsTab({
             role="dialog"
             aria-modal="true"
             className="attendance-sheet fixed inset-0 z-[60] flex h-[100dvh] items-stretch justify-center bg-foreground/40 backdrop-blur-sm sm:items-center sm:p-4"
+            className="attendance-sheet fixed inset-0 z-60 flex h-dvh items-stretch justify-center bg-foreground/40 backdrop-blur-sm sm:items-center sm:p-4"
             aria-label="Daily timesheet editor"
           >
             <div className="attendance-dialog flex h-full w-full max-w-6xl flex-col gap-3 overflow-y-auto bg-[linear-gradient(180deg,#fbfcff_0%,#f4f7fb_100%)] p-3 shadow-[0_30px_70px_rgba(15,23,42,0.18)] sm:h-auto sm:max-h-[92vh] sm:rounded-2xl sm:p-5">
@@ -1454,6 +1488,7 @@ export function TimesheetsTab({
                         setCopyPickerOpen(false);
                       }}
                       className="w-[8.25rem] bg-transparent text-xs font-semibold text-navy focus:outline-none"
+                      className="w-33 bg-transparent text-xs font-semibold text-navy focus:outline-none"
                     />
                   </label>
                   <button
@@ -1462,6 +1497,11 @@ export function TimesheetsTab({
                     onClick={() => void saveBatch()}
                     className={`${btnGold} h-8 rounded-md px-3 text-xs`}
                   >
+                    {saving ? (
+                      <LoaderCircle size={14} className="animate-spin" />
+                    ) : (
+                      <Save size={14} />
+                    )}
                     {saving ? "Saving…" : "Save Changes"}
                   </button>
                   <button
@@ -1809,6 +1849,7 @@ export function TimesheetsTab({
                                         )}
                                         onChange={() => toggleEmployee(employee)}
                                         className="h-4 w-4 accent-[var(--navy)]"
+                                        className="h-4 w-4 accent-navy"
                                       />
                                       <span className="min-w-0 flex-1">
                                         <span className="block truncate font-semibold text-navy">
@@ -1998,6 +2039,7 @@ export function TimesheetsTab({
                               checked={visibleColumns[value]}
                               onChange={() => toggleColumn(value)}
                               className="h-4 w-4 accent-[var(--navy)]"
+                              className="h-4 w-4 accent-navy"
                             />
                             {label}
                           </label>
@@ -2021,6 +2063,7 @@ export function TimesheetsTab({
                                 <th className="w-9 px-2 text-center" aria-label="Selected" />
                                 <th className="w-22 px-2 text-left">Status</th>
                                 <th className="sticky left-[164px] z-20 w-36 bg-slate-100 px-2 text-left">
+                                <th className="sticky left-41 z-20 w-36 bg-slate-100 px-2 text-left">
                                   Employee
                                 </th>
                                 <th className="w-36 px-2 text-left">Role / Phone</th>
@@ -2096,6 +2139,7 @@ export function TimesheetsTab({
                                           onChange={() => toggleEmployee(employee)}
                                           aria-label={`Select ${employee.name}`}
                                           className="h-3.5 w-3.5 accent-[var(--navy)] disabled:opacity-50"
+                                          className="h-3.5 w-3.5 accent-navy disabled:opacity-50"
                                         />
                                       </td>
                                       <td className="px-2">
@@ -2118,6 +2162,7 @@ export function TimesheetsTab({
                                       </td>
                                       <td
                                         className="sticky left-[164px] z-10 max-w-36 truncate bg-card px-2 font-semibold text-navy"
+                                        className="sticky left-41 z-10 max-w-36 truncate bg-card px-2 font-semibold text-navy"
                                         title={employee.name}
                                       >
                                         {employee.name}
@@ -2270,6 +2315,7 @@ export function TimesheetsTab({
                   </div>
 
                   <section className="space-y-1.5">
+                  <section className="daily-attendance-report space-y-1.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-baseline gap-2">
                         <h3 className="text-sm font-bold text-navy">Saved batches</h3>
@@ -2287,6 +2333,28 @@ export function TimesheetsTab({
                     </div>
                     <div className="overflow-x-auto rounded-md border border-border bg-card">
                       <table className="w-full min-w-[760px] border-collapse text-xs">
+                        className={`${btnGold} no-print h-8 rounded-md px-2.5 py-1 text-xs`}
+                      >
+                        <Plus size={13} /> Create another batch
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => window.print()}
+                        className={`${btnOutline} no-print h-8 rounded-md px-2.5 py-1 text-xs`}
+                      >
+                        <Printer size={13} /> Print daily report
+                      </button>
+                    </div>
+                    {savedBatches.length > 0 && role !== "foreman" && payrollMonthQuery.error && (
+                      <p
+                        role="alert"
+                        className="rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn"
+                      >
+                        Payroll-month deductions are unavailable: {payrollMonthQuery.error.message}
+                      </p>
+                    )}
+                    <div className="overflow-x-auto rounded-md border border-border bg-card">
+                      <table className="w-full min-w-190 border-collapse text-xs">
                         <thead className="bg-slate-100">
                           <tr className="h-8 border-b border-border text-left text-[10px] font-bold uppercase tracking-wide text-slate-500">
                             <th className="w-10 px-2">#</th>
@@ -2294,6 +2362,12 @@ export function TimesheetsTab({
                             <th className="px-2">Site / project</th>
                             <th className="px-2">Foreman</th>
                             <th className="w-36 px-2">Workers</th>
+                            <th className="w-24 px-2 text-right">Present</th>
+                            <th className="w-24 px-2 text-right">Absent</th>
+                            <th className="w-24 px-2 text-right">OT hrs</th>
+                            <th className="w-32 px-2 text-right">
+                              Payroll-month deductions (all sites)
+                            </th>
                             <th className="w-40 px-2">Created at</th>
                             <th className="w-28 px-2 text-right">Actions</th>
                           </tr>
@@ -2303,6 +2377,7 @@ export function TimesheetsTab({
                             <tr>
                               <td
                                 colSpan={7}
+                                colSpan={11}
                                 className="h-11 px-3 text-center text-xs text-muted-foreground"
                               >
                                 No attendance batches saved for this date. Create a batch above or
@@ -2314,6 +2389,13 @@ export function TimesheetsTab({
                               const present = batch.entries.filter((entry) =>
                                 worked(entry.status),
                               ).length;
+                              const absent = batch.entries.filter(
+                                (entry) => entry.status === "ABSENT",
+                              ).length;
+                              const overtime = batch.entries.reduce(
+                                (sum, entry) => sum + Number(entry.overtime_hours ?? 0),
+                                0,
+                              );
                               const firstEntry = batch.entries[0];
                               return (
                                 <tr key={batch.key} className="h-10 hover:bg-slate-50/70">
@@ -2327,6 +2409,16 @@ export function TimesheetsTab({
                                   <td className="max-w-48 truncate px-2">{batch.foreman}</td>
                                   <td className="px-2 tabular-nums">
                                     {batch.entries.length} · {present} present
+                                  </td>
+                                  <td className="px-2 text-right tabular-nums">{present}</td>
+                                  <td className="px-2 text-right tabular-nums">{absent}</td>
+                                  <td className="px-2 text-right tabular-nums">
+                                    {overtime.toFixed(2)}
+                                  </td>
+                                  <td className="px-2 text-right tabular-nums">
+                                    {role === "foreman" || payrollMonthQuery.error
+                                      ? "—"
+                                      : batchDeductions(batch.entries).toFixed(3)}
                                   </td>
                                   <td className="px-2 text-slate-500">
                                     {firstEntry
@@ -2350,6 +2442,37 @@ export function TimesheetsTab({
                             })
                           )}
                         </tbody>
+                        {savedBatches.length > 0 && (
+                          <tfoot className="border-t-2 border-border bg-navy-soft/70 font-bold text-navy">
+                            <tr>
+                              <td colSpan={4} className="px-2 py-2 text-right">
+                                Daily totals
+                              </td>
+                              <td className="px-2 py-2 text-right">{timesheets.length}</td>
+                              <td className="px-2 py-2 text-right">
+                                {timesheets.filter((entry) => worked(entry.status)).length}
+                              </td>
+                              <td className="px-2 py-2 text-right">
+                                {timesheets.filter((entry) => entry.status === "ABSENT").length}
+                              </td>
+                              <td className="px-2 py-2 text-right">
+                                {timesheets
+                                  .reduce(
+                                    (sum, entry) => sum + Number(entry.overtime_hours ?? 0),
+                                    0,
+                                  )
+                                  .toFixed(2)}
+                              </td>
+                              <td className="px-2 py-2 text-right">
+                                {role === "foreman" || payrollMonthQuery.error
+                                  ? "—"
+                                  : batchDeductions(timesheets).toFixed(3)}
+                              </td>
+                              <td />
+                              <td />
+                            </tr>
+                          </tfoot>
+                        )}
                       </table>
                     </div>
                   </section>
