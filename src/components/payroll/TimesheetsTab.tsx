@@ -1448,6 +1448,7 @@ export function TimesheetsTab({
           <section
             role="dialog"
             aria-modal="true"
+            className="attendance-sheet fixed inset-0 z-[60] flex h-[100dvh] items-stretch justify-center bg-foreground/40 backdrop-blur-sm sm:items-center sm:p-4"
             className="attendance-sheet fixed inset-0 z-60 flex h-dvh items-stretch justify-center bg-foreground/40 backdrop-blur-sm sm:items-center sm:p-4"
             aria-label="Daily timesheet editor"
           >
@@ -1486,6 +1487,7 @@ export function TimesheetsTab({
                         setWorkDate(nextDate);
                         setCopyPickerOpen(false);
                       }}
+                      className="w-[8.25rem] bg-transparent text-xs font-semibold text-navy focus:outline-none"
                       className="w-33 bg-transparent text-xs font-semibold text-navy focus:outline-none"
                     />
                   </label>
@@ -1846,6 +1848,7 @@ export function TimesheetsTab({
                                           (assignedOutsideBatch && !checked) || lockedInBatch,
                                         )}
                                         onChange={() => toggleEmployee(employee)}
+                                        className="h-4 w-4 accent-[var(--navy)]"
                                         className="h-4 w-4 accent-navy"
                                       />
                                       <span className="min-w-0 flex-1">
@@ -2035,6 +2038,7 @@ export function TimesheetsTab({
                               type="checkbox"
                               checked={visibleColumns[value]}
                               onChange={() => toggleColumn(value)}
+                              className="h-4 w-4 accent-[var(--navy)]"
                               className="h-4 w-4 accent-navy"
                             />
                             {label}
@@ -2058,6 +2062,7 @@ export function TimesheetsTab({
                               <tr className="h-8 border-b border-border text-[10px] font-bold uppercase tracking-wide text-slate-500">
                                 <th className="w-9 px-2 text-center" aria-label="Selected" />
                                 <th className="w-22 px-2 text-left">Status</th>
+                                <th className="sticky left-[164px] z-20 w-36 bg-slate-100 px-2 text-left">
                                 <th className="sticky left-41 z-20 w-36 bg-slate-100 px-2 text-left">
                                   Employee
                                 </th>
@@ -2133,6 +2138,7 @@ export function TimesheetsTab({
                                           disabled={assignedExisting}
                                           onChange={() => toggleEmployee(employee)}
                                           aria-label={`Select ${employee.name}`}
+                                          className="h-3.5 w-3.5 accent-[var(--navy)] disabled:opacity-50"
                                           className="h-3.5 w-3.5 accent-navy disabled:opacity-50"
                                         />
                                       </td>
@@ -2155,6 +2161,7 @@ export function TimesheetsTab({
                                         </select>
                                       </td>
                                       <td
+                                        className="sticky left-[164px] z-10 max-w-36 truncate bg-card px-2 font-semibold text-navy"
                                         className="sticky left-41 z-10 max-w-36 truncate bg-card px-2 font-semibold text-navy"
                                         title={employee.name}
                                       >
@@ -2307,6 +2314,7 @@ export function TimesheetsTab({
                     </div>
                   </div>
 
+                  <section className="space-y-1.5">
                   <section className="daily-attendance-report space-y-1.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-baseline gap-2">
@@ -2318,6 +2326,13 @@ export function TimesheetsTab({
                       <button
                         type="button"
                         onClick={startNewBatch}
+                        className={`${btnGold} h-8 rounded-md px-2.5 py-1 text-xs`}
+                      >
+                        <Plus size={13} /> Create another batch
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto rounded-md border border-border bg-card">
+                      <table className="w-full min-w-[760px] border-collapse text-xs">
                         className={`${btnGold} no-print h-8 rounded-md px-2.5 py-1 text-xs`}
                       >
                         <Plus size={13} /> Create another batch
@@ -2361,6 +2376,7 @@ export function TimesheetsTab({
                           {savedBatches.length === 0 ? (
                             <tr>
                               <td
+                                colSpan={7}
                                 colSpan={11}
                                 className="h-11 px-3 text-center text-xs text-muted-foreground"
                               >

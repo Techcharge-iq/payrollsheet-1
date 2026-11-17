@@ -30,6 +30,7 @@ export function payrollBatchBlob(batch: PayrollBatch, employees: Employee[]) {
     ["Rate", 18, "right"],
     ["Gross", 23, "right"],
     ["Food", 19, "right"],
+    ["Prev adv.", 22, "right"],
     ["Adv deduction", 22, "right"],
     ["New adv.", 22, "right"],
     ["Other", 19, "right"],

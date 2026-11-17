@@ -678,6 +678,12 @@ function Dashboard({
         className={`no-print floating-menu ${mobileMenuOpen ? "is-open" : ""}`}
         aria-label="Application menu"
       >
+        <div className="floating-menu-brand">
+          <span className="floating-menu-brand-icon">
+            <BriefcaseBusiness size={19} />
+          </span>
+          <span className="floating-menu-brand-label">Payroll Studio</span>
+        </div>
         <button
           type="button"
           className="floating-menu-trigger"

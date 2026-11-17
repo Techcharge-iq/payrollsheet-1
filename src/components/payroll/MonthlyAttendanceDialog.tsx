@@ -612,6 +612,8 @@ export function MonthlyAttendanceDialog({
     setDays(nextDays);
     loadedContext.current = context;
   }, [
+    singleEmployeeId,
+    month,
     assignmentsQuery.data,
     assignmentsQuery.isLoading,
     calendarDays,
@@ -1651,6 +1653,7 @@ export function MonthlyAttendanceDialog({
               }
               className={btnGold}
             >
+              <Save size={15} />{" "}
               {saving ? <LoaderCircle size={15} className="animate-spin" /> : <Save size={15} />}{" "}
               {saving ? "Saving…" : `Save Attendance for ${selectedEmployeeIds.size} Employee(s)`}
             </button>

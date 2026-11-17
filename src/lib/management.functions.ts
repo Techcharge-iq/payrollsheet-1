@@ -74,7 +74,7 @@ async function writeAudit(
 
 export const saveManagedUser = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((data: unknown) => saveUserInput.parse(data))
+  .validator((data: unknown) => saveUserInput.parse(data))
   .handler(async ({ data, context }) => {
     await assertAdmin(context);
     const supabaseAdmin = (await import("@/integrations/supabase/client.server"))
@@ -272,7 +272,7 @@ export const saveManagedUser = createServerFn({ method: "POST" })
 
 export const saveManagedProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((data: unknown) => saveProjectInput.parse(data))
+  .validator((data: unknown) => saveProjectInput.parse(data))
   .handler(async ({ data, context }) => {
     await assertAdmin(context);
     const supabaseAdmin = (await import("@/integrations/supabase/client.server"))

@@ -1,3 +1,27 @@
+import { useMemo, useState } from "react";
+import {
+  CalendarDays,
+  Clock3,
+  Download,
+  FileSpreadsheet,
+  Loader2,
+  MapPin,
+  Printer,
+  Upload,
+  Users,
+} from "lucide-react";
+import type { Employee } from "@/lib/payroll";
+import { useSaveTimesheets, useTimesheetsForMonth, type TimesheetRecord } from "@/lib/payroll-data";
+import { currentPayrollMonth, fmt, monthLabel, payrollMonthOptions } from "@/lib/payroll";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  downloadAttendanceImportTemplate,
+  readAttendanceImport,
+  type AttendanceImportRecord,
+} from "@/lib/attendance-import";
+import { downloadAttendanceReport } from "@/lib/attendance-report-pdf";
+import type { TablesInsert } from "@/integrations/supabase/external-types";
+import { btnOutline, card, select } from "./ui";
 import { useCallback, useMemo, useState } from "react";
 import { CalendarDays, Clock3, FileDown, Loader2, MapPin, Printer, Users } from "lucide-react";
 import type { Employee } from "@/lib/payroll";
@@ -275,6 +299,13 @@ export function AttendanceReportTab({ employees }: Props) {
   const [month, setMonth] = useState(currentPayrollMonth);
   const [employeeId, setEmployeeId] = useState("");
   const [site, setSite] = useState("");
+  const [defaultSite, setDefaultSite] = useState("");
+  const [defaultForeman, setDefaultForeman] = useState("");
+  const [importRows, setImportRows] = useState<AttendanceImportRecord[]>([]);
+  const [importError, setImportError] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+  const [isSavingImport, setIsSavingImport] = useState(false);
+  const saveTimesheets = useSaveTimesheets();
   const [exportingAnnexureA, setExportingAnnexureA] = useState(false);
   const timesheetsQuery = useTimesheetsForMonth(month);
   const batchesQuery = useBatches(month);
@@ -393,6 +424,81 @@ export function AttendanceReportTab({ employees }: Props) {
     }),
     { days: 0, hours: 0, present: 0, absent: 0, overtime: 0, deductions: 0 },
   );
+  const staffTotals = employeeRows
+    .filter((entry) => entry.status === "PRESENT" || entry.status === "HALF_DAY")
+    .reduce(
+      (totals, entry) => ({
+        days: totals.days + 1,
+        hours: totals.hours + netHours(entry),
+      }),
+      { days: 0, hours: 0 },
+    );
+  const exportRows =
+    filter === "staff" ? employeeRows : reportRows.filter((entry) => entry.site === site);
+  const existingImportCount = importRows.filter((row) =>
+    entryByEmployeeDay.has(`${row.employeeId}:${row.workDate}`),
+  ).length;
+
+  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const inputElement = event.currentTarget;
+    const file = inputElement.files?.[0];
+    if (!file) return;
+    setImportError("");
+    setImportRows([]);
+    setIsImporting(true);
+    try {
+      const rows = await readAttendanceImport(file, employees, month, {
+        site: filter === "site" ? site : defaultSite,
+        foreman: defaultForeman,
+      });
+      setImportRows(rows);
+    } catch (caughtError) {
+      setImportError(
+        caughtError instanceof Error ? caughtError.message : "Could not read the attendance file.",
+      );
+    } finally {
+      setIsImporting(false);
+      inputElement.value = "";
+    }
+  };
+
+  const saveImportedRows = async () => {
+    if (!importRows.length) return;
+    if (
+      existingImportCount > 0 &&
+      !window.confirm(
+        `${existingImportCount} existing employee-day record(s) will be replaced. Continue?`,
+      )
+    ) {
+      return;
+    }
+    setIsSavingImport(true);
+    try {
+      const payload: TablesInsert<"timesheets">[] = importRows.map((row) => ({
+        employee_id: row.employeeId,
+        work_date: row.workDate,
+        site: row.site,
+        foreman: row.foreman,
+        project_id: null,
+        foreman_user_id: null,
+        status: row.status,
+        in_time: row.inTime,
+        out_time: row.outTime,
+        break_hours: row.breakHours,
+        overtime_hours: row.overtimeHours,
+        remarks: "Imported from monthly attendance file",
+      }));
+      await saveTimesheets.mutateAsync(payload);
+      setImportRows([]);
+      setImportError("");
+    } catch (caughtError) {
+      setImportError(
+        caughtError instanceof Error ? caughtError.message : "Could not save imported attendance.",
+      );
+    } finally {
+      setIsSavingImport(false);
+    }
+  };
   const staffTotals = employeeRows.reduce(
     (totals, entry) => ({
       days: totals.days + (isWorked(entry) ? 1 : 0),
@@ -417,6 +523,36 @@ export function AttendanceReportTab({ employees }: Props) {
             Review monthly hours by employee or work site.
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => window.print()}
+          className={`no-print ml-auto ${btnOutline}`}
+        >
+          <Printer size={16} />
+          Print Report
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            downloadAttendanceReport(
+              exportRows,
+              {
+                month,
+                subject: filter === "staff" ? (selectedEmployee?.name ?? "Employee") : site,
+              },
+              employees,
+            )
+          }
+          disabled={
+            (!selectedEmployee && filter === "staff") ||
+            (!site && filter === "site") ||
+            !exportRows.length
+          }
+          className={`no-print ${btnOutline}`}
+        >
+          <Download size={16} />
+          Download PDF
+        </button>
         <div className="no-print ml-auto flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -519,6 +655,8 @@ export function AttendanceReportTab({ employees }: Props) {
               value={month}
               onChange={(event) => {
                 setMonth(event.target.value);
+                setImportRows([]);
+                setImportError("");
                 setSite("");
               }}
               className={select + " mt-1"}
@@ -531,6 +669,126 @@ export function AttendanceReportTab({ employees }: Props) {
             </select>
           </label>
         </div>
+      </div>
+
+      <div className={card + " no-print space-y-3 p-4"}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-bold text-navy">Import monthly attendance</h3>
+            <p className="text-xs text-muted-foreground">
+              Upload a PDF exported from this report, .xlsx, or .csv. Review every row before
+              saving.
+            </p>
+          </div>
+          <button type="button" onClick={downloadAttendanceImportTemplate} className={btnOutline}>
+            <FileSpreadsheet size={15} /> Download template
+          </button>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className="text-xs font-semibold text-slate-600">
+            Default site
+            <input
+              value={filter === "site" && site ? site : defaultSite}
+              onChange={(event) => setDefaultSite(event.target.value)}
+              className={select + " mt-1"}
+              placeholder="Used when the file has no site column"
+            />
+          </label>
+          <label className="text-xs font-semibold text-slate-600">
+            Default foreman
+            <input
+              value={defaultForeman}
+              onChange={(event) => setDefaultForeman(event.target.value)}
+              className={select + " mt-1"}
+              placeholder="Used when the file has no foreman column"
+            />
+          </label>
+          <label className="flex cursor-pointer items-center justify-center gap-2 self-end rounded-lg border border-border px-3 py-2 text-sm font-bold text-navy hover:bg-navy-soft">
+            <input
+              type="file"
+              accept=".pdf,.xlsx,.csv,application/pdf"
+              className="sr-only"
+              onChange={handleImportFile}
+              disabled={isImporting || isSavingImport}
+            />
+            {isImporting ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+            {isImporting ? "Reading file…" : "Choose attendance file"}
+          </label>
+        </div>
+        {importError && (
+          <p
+            role="alert"
+            className="rounded-lg border border-danger/30 bg-danger/5 p-3 text-xs text-danger"
+          >
+            {importError}
+          </p>
+        )}
+        {importRows.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-slate-700">
+                {importRows.length} row(s) ready
+                {existingImportCount
+                  ? ` · ${existingImportCount} will replace existing records`
+                  : ""}
+              </p>
+              <button
+                type="button"
+                onClick={() => void saveImportedRows()}
+                disabled={isSavingImport}
+                className={btnOutline}
+              >
+                {isSavingImport ? (
+                  <Loader2 size={15} className="animate-spin" />
+                ) : (
+                  <Upload size={15} />
+                )}
+                {isSavingImport ? "Saving…" : "Save attendance"}
+              </button>
+            </div>
+            <div className="max-h-64 overflow-auto rounded-lg border border-border">
+              <table className="min-w-full text-left text-xs">
+                <thead className="sticky top-0 bg-slate-50 text-slate-600">
+                  <tr>
+                    {[
+                      "Employee",
+                      "Date",
+                      "Site",
+                      "Foreman",
+                      "Status",
+                      "In",
+                      "Out",
+                      "Break",
+                      "OT",
+                    ].map((heading) => (
+                      <th key={heading} className="px-2 py-2 font-bold">
+                        {heading}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {importRows.map((row) => (
+                    <tr
+                      key={`${row.employeeId}:${row.workDate}`}
+                      className="border-t border-border"
+                    >
+                      <td className="px-2 py-1.5">{row.employeeName}</td>
+                      <td className="px-2 py-1.5">{row.workDate}</td>
+                      <td className="px-2 py-1.5">{row.site}</td>
+                      <td className="px-2 py-1.5">{row.foreman}</td>
+                      <td className="px-2 py-1.5">{row.status}</td>
+                      <td className="px-2 py-1.5">{row.inTime ?? "—"}</td>
+                      <td className="px-2 py-1.5">{row.outTime ?? "—"}</td>
+                      <td className="px-2 py-1.5">{row.breakHours}</td>
+                      <td className="px-2 py-1.5">{row.overtimeHours}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {loading ? (
