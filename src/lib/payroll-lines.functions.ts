@@ -4,6 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { payrollSaveErrorMessage } from "./payroll-save-error";
+import { fetchAllPages } from "./paged-query";
+import { assertNoDuplicateSitePayroll, type PayrollScopeBatch, type PayrollScopeLine } from "./payroll-site-duplicates";
 
 const PAYROLL_WRITERS = new Set(["admin", "hr", "manager", "foreman"]);
 // Only these roles may record a new advance on a payroll line.
@@ -37,6 +39,22 @@ export const savePayrollLines = createServerFn({ method: "POST" })
 
     const admin = (await import("@/integrations/supabase/client.server"))
       .supabaseAdmin as unknown as SupabaseClient<any>;
+
+    if (!data.rows.length) return { rows: [] };
+    const batchIds = [...new Set(data.rows.map((row) => row.batch_id))];
+    const targets = await fetchAllPages<PayrollScopeBatch>(() => admin.from("payroll_batches")
+      .select("id,month,site").in("id", batchIds));
+    const months = [...new Set(targets.map((batch) => batch.month))];
+    if (!months.length) throw new Error("The payroll batch was not found. Refresh and retry.");
+    const [scopeBatches, scopeLines] = await Promise.all([
+      fetchAllPages<PayrollScopeBatch>(() => admin.from("payroll_batches").select("id,month,site").in("month", months)),
+      fetchAllPages<PayrollScopeLine>(() => admin.from("payroll_lines").select("id,batch_id,employee_id").in("month", months)),
+    ]);
+    assertNoDuplicateSitePayroll(data.rows.map((row) => ({
+      batch_id: row.batch_id,
+      employee_id: row.employee_id,
+      ...(row.id ? { id: row.id } : {}),
+    })), scopeBatches, scopeLines);
 
     // Non-issuers cannot change new_advance: keep the stored value (or 0 for new lines).
     const stored = new Map<string, number>();

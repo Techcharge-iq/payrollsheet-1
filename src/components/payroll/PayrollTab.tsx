@@ -4,6 +4,8 @@ import {
   siteAdvanceDeduction,
   siteDayShare,
   sameSite,
+  priorMonthlyFood,
+  remainingAdvanceForBatch,
 } from "@/lib/multi-site-payroll";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -35,6 +37,7 @@ import {
   currentPayrollMonth,
   lineGross,
   lockedEmployeeIds,
+  payrollEmployeeCount,
   monthLabel,
   payrollMonthOptions,
   PAYROLL_POLICY,
@@ -619,14 +622,13 @@ export function PayrollTab({
     () =>
       monthBatches.reduce(
         (summary, batch) => {
-          summary.employees += batch.lines.length;
           batch.lines.forEach((line) => {
             summary.net += toNum(line.net_salary);
             summary.paid += toNum(line.paid);
           });
           return summary;
         },
-        { employees: 0, net: 0, paid: 0 },
+        { employees: payrollEmployeeCount(monthBatches), net: 0, paid: 0 },
       ),
     [monthBatches],
   );
@@ -636,20 +638,16 @@ export function PayrollTab({
     [batches, month, draft?.id, draft?.site, generationSite],
   );
 
+  const availableAdvance = useCallback(
+    (employeeId: number | string, batchId: string | null = draft?.id ?? null) =>
+      remainingAdvanceForBatch(batches, employeeId, month, batchId, carryForward(employeeId)),
+    [batches, month, draft?.id, carryForward],
+  );
+
   const foodDeductionForEmployee = (employeeId: number) => {
     const employee = employees.find((item) => item.id === employeeId);
-    const priorLines = batches
-      .filter((batch) => batch.month < month)
-      .flatMap((batch) =>
-        batch.lines
-          .filter((line) => Number(line.employee_id) === employeeId)
-          .map((line) => ({ month: batch.month, line })),
-      )
-      .sort((a, b) => b.month.localeCompare(a.month));
-    const latestPriorLine = priorLines[0];
-    if (latestPriorLine) return toNum(latestPriorLine.line.food_deduction);
     // Zero is an explicit opt-out in the employee form, not an unset default.
-    return toNum(employee?.default_food_deduction ?? defaultFoodDeduction);
+    return priorMonthlyFood(batches, employeeId, month, toNum(employee?.default_food_deduction ?? defaultFoodDeduction));
   };
 
   const foremen = useMemo(() => {
@@ -819,12 +817,7 @@ export function PayrollTab({
       );
       const isLastSite =
         !generationSite || sameSite(lastActiveSite(employeeMonthEntries), generationSite);
-      const appliedThisMonth = monthBatches
-        .filter((batch) => batch.id !== draft?.id)
-        .flatMap((batch) => batch.lines)
-        .filter((line) => Number(line.employee_id) === employeeId)
-        .reduce((sum, line) => sum + toNum(line.prev_advance), 0);
-      const pendingAdvance = Math.max(0, carryForward(employeeId) - appliedThisMonth);
+      const pendingAdvance = availableAdvance(employeeId);
       const grossEstimate = calculatePayroll({
         regularHours,
         overtimeHours,
@@ -981,8 +974,8 @@ export function PayrollTab({
 
   const validationErrors = useMemo(
     () =>
-      draft ? validateBatch(draft, month, employees, carryForward, locked, payrollPolicy) : [],
-    [draft, month, employees, carryForward, locked, payrollPolicy],
+      draft ? validateBatch(draft, month, employees, availableAdvance, locked, payrollPolicy) : [],
+    [draft, month, employees, availableAdvance, locked, payrollPolicy],
   );
 
   const importFile = async (file: File) => {
@@ -1262,7 +1255,7 @@ export function PayrollTab({
         batch,
         batch.month,
         employees,
-        carryForward,
+        (employeeId) => availableAdvance(employeeId, batch.id),
         otherBatchEmployees,
         payrollPolicy,
       );
@@ -1779,7 +1772,7 @@ export function PayrollTab({
                   </thead>
                   <tbody>
                     {draft.lines.map((l, idx) => {
-                      const carry = l.employee_id ? carryForward(l.employee_id) : 0;
+                      const carry = l.employee_id ? availableAdvance(l.employee_id) : 0;
                       return (
                         <tr key={idx} className="border-b border-border align-top last:border-0">
                           <td className="px-3 py-2">

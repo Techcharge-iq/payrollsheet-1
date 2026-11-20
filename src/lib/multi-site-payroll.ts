@@ -4,6 +4,8 @@
  * - Personal advances are recovered only in the batch for the employee's last active
  *   site of the month (latest attendance date), capped so net pay never goes negative.
  */
+import { toNum, type PayrollBatch } from "./payroll";
+
 export type SiteEntry = { work_date: string; site: string; status?: string | null };
 
 const norm = (v?: string | null) => (v ?? "").trim().toLowerCase();
@@ -25,7 +27,41 @@ export function siteDayShare(entries: SiteEntry[], site: string): number {
 /** Site of the latest active attendance date in the period. */
 export function lastActiveSite(entries: SiteEntry[]): string | null {
   const active = entries.filter(isActive).sort((a, b) => a.work_date.localeCompare(b.work_date));
-  return active.length ? active[active.length - 1]!.site.trim() : null;
+  return active.at(-1)?.site.trim() ?? null;
+}
+
+/** Prior monthly food is the sum of that month's site lines, not its first line. */
+export function priorMonthlyFood(batches: PayrollBatch[], employeeId: number, month: string, fallback: number): number {
+  const prior = batches.filter((batch) => batch.month < month && batch.lines.some((line) => Number(line.employee_id) === employeeId));
+  const latestMonth = prior.map((batch) => batch.month).sort().at(-1);
+  if (!latestMonth) return fallback;
+  return Math.round(prior.filter((batch) => batch.month === latestMonth).flatMap((batch) => batch.lines)
+    .filter((line) => Number(line.employee_id) === employeeId)
+    .reduce((sum, line) => sum + toNum(line.food_deduction), 0) * 1000) / 1000;
+}
+
+/** Reserve recoveries from every other site batch, including unpaid drafts. */
+export function remainingAdvanceForBatch(batches: PayrollBatch[], employeeId: number | string, month: string, batchId: string | null, opening: number): number {
+  const recovered = batches.filter((batch) => batch.month === month && batch.id !== batchId)
+    .flatMap((batch) => batch.lines).filter((line) => String(line.employee_id) === String(employeeId))
+    .reduce((sum, line) => sum + toNum(line.prev_advance), 0);
+  return Math.max(0, Math.round((opening - recovered) * 1000) / 1000);
+}
+
+/** Specific-site drafts must not distribute their salary to other transfer sites. */
+export function attendanceBelongsToBatch(entry: { site: string; project_id?: string | null }, batch: { site: string; project_id?: string | null }): boolean {
+  const site = norm(batch.site);
+  if (!site || site === "multiple sites" || site === "all sites") return true;
+  if (batch.project_id && entry.project_id) return batch.project_id === entry.project_id;
+  return sameSite(entry.site, batch.site);
+}
+
+/** Replace only editable draft allocations; retain finalized rows verbatim. */
+export function mergeDraftAllocations<T extends { payroll_line_id: string }>(saved: T[], derived: T[], draftLineIds: ReadonlySet<string>): T[] {
+  return [
+    ...saved.filter((row) => !draftLineIds.has(row.payroll_line_id)),
+    ...derived.filter((row) => draftLineIds.has(row.payroll_line_id)),
+  ];
 }
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;

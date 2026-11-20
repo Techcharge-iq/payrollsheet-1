@@ -328,6 +328,15 @@ export function employeeRows(batches: PayrollBatch[], employeeId?: number | stri
   return out.sort((a, b) => a.month.localeCompare(b.month));
 }
 
+export function payrollEmployeeCount(batches: PayrollBatch[]): number {
+  return new Set(batches.flatMap((batch) => batch.lines)
+    .filter((line) => line.employee_id !== "").map((line) => String(line.employee_id))).size;
+}
+
+export function payrollMonthCount(rows: Pick<HistoryRow, "month">[]): number {
+  return new Set(rows.map((row) => row.month)).size;
+}
+
 export function rowTotals(rows: HistoryRow[]) {
   const sum = (f: (r: HistoryRow) => number) => rows.reduce((s, r) => s + f(r), 0);
   return {

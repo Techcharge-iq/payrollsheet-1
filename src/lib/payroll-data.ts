@@ -5,6 +5,7 @@ import type { Tables, TablesInsert } from "@/integrations/supabase/external-type
 import type { AdvanceTx, Employee, PayrollBatch, PayrollBatchStatus, PayrollLine } from "./payroll";
 import { calculatePayroll, PAYROLL_CALCULATION_VERSION, PAYROLL_POLICY, toNum } from "./payroll";
 import { deleteCachedRows, readCachedRows, writeCachedRows } from "./payroll-cache";
+import { attendanceBelongsToBatch, mergeDraftAllocations } from "./multi-site-payroll";
 
 export type TimesheetRecord = Tables<"timesheets">;
 export type PayrollSiteAllocation = Tables<"payroll_site_allocations">;
@@ -92,6 +93,7 @@ async function deriveFallbackAllocations(month: string): Promise<PayrollSiteAllo
     const empTimesheets = monthTimesheets.filter(
       (t) =>
         t.employee_id === line.employee_id &&
+        (!batch || !["DRAFT", "REVIEW"].includes(batch.status) || attendanceBelongsToBatch(t, batch)) &&
         (toNum(t.regular_hours) + toNum(t.overtime_hours) > 0 || toNum(t.total_hours) > 0),
     );
 
@@ -188,12 +190,19 @@ export function usePayrollSiteAllocations(month: string, enabled = true) {
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
         throw new Error("Select a valid payroll month for site allocation.");
       }
-      const rows = await readCachedRows<PayrollSiteAllocation>("payroll_site_allocations", {
-        month,
-      });
+      const [rows, batches, lines] = await Promise.all([
+        readCachedRows<PayrollSiteAllocation>("payroll_site_allocations", { month }),
+        readCachedRows<Tables<"payroll_batches">>("payroll_batches", { month }),
+        readCachedRows<Tables<"payroll_lines">>("payroll_lines", { month }),
+      ]);
       const filtered = rows.filter((row) => row.month === month);
       if (filtered.length > 0) {
-        return filtered.sort(
+        const draftBatchIds = new Set(batches.filter((batch) => batch.month === month && ["DRAFT", "REVIEW"].includes(batch.status)).map((batch) => batch.id));
+        const draftLineIds = new Set(lines.filter((line) => line.month === month && draftBatchIds.has(line.batch_id)).map((line) => line.id));
+        const resolved = draftLineIds.size
+          ? mergeDraftAllocations(filtered, await deriveFallbackAllocations(month), draftLineIds)
+          : filtered;
+        return resolved.sort(
           (a, b) => a.site.localeCompare(b.site) || a.foreman.localeCompare(b.foreman),
         );
       }
@@ -520,6 +529,8 @@ export function useSaveBatch(canDelete = false) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["payroll_batches"] });
       void qc.invalidateQueries({ queryKey: ["payroll_site_allocations"] });
+      void qc.invalidateQueries({ queryKey: ["payroll_lines_month"] });
+      void qc.invalidateQueries({ queryKey: ["payroll_advance_balance_before"] });
     },
   });
 }
@@ -546,6 +557,8 @@ export function useDeleteBatch() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["payroll_batches"] });
       void qc.invalidateQueries({ queryKey: ["payroll_site_allocations"] });
+      void qc.invalidateQueries({ queryKey: ["payroll_lines_month"] });
+      void qc.invalidateQueries({ queryKey: ["payroll_advance_balance_before"] });
     },
   });
 }

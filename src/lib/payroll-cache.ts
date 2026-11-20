@@ -132,6 +132,10 @@ function invalidateTableQueries(queryClient: QueryClient, table: PayrollCacheTab
   if (table === "payroll_batches" || table === "payroll_lines" || table === "timesheets") {
     void queryClient.invalidateQueries({ queryKey: ["payroll_site_allocations"] });
   }
+  if (table === "payroll_lines") {
+    void queryClient.invalidateQueries({ queryKey: ["payroll_lines_month"] });
+    void queryClient.invalidateQueries({ queryKey: ["payroll_advance_balance_before"] });
+  }
 }
 
 export async function initializePayrollCache(

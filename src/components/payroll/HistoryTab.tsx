@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { History, FileDown } from "lucide-react";
 import {
   employeeRows,
+  payrollMonthCount,
   fmt,
   lineBalance,
   lineGross,
@@ -95,7 +96,7 @@ export function HistoryTab({ employees, batches, advances }: Props) {
             aria-label={`${employee.name} payroll totals`}
           >
             {[
-              { label: "Months recorded", value: String(rows.length) },
+              { label: "Months recorded", value: String(payrollMonthCount(rows)) },
               { label: "Total hours", value: fmt(totals.hours) },
               { label: "Total gross", value: fmt(totals.gross) },
               { label: "Food deductions", value: fmt(totals.food) },
