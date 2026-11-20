@@ -21,6 +21,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import type { Employee } from "@/lib/payroll";
 import { dbAny } from "@/integrations/supabase/external-client";
+import { fetchAllPages } from "@/lib/paged-query";
 import { useBatches, useTimesheetsForDate, type TimesheetRecord } from "@/lib/payroll-data";
 import { useProjects, type Project } from "@/lib/management-data";
 import { projectAccessError } from "@/lib/project-access";
@@ -343,12 +344,11 @@ export function TimesheetsTab({
     queryFn: async (): Promise<
       Array<{ user_id: string; full_name: string | null; email: string | null }>
     > => {
-      const { data, error } = await dbAny
+      const data = await fetchAllPages(() => dbAny
         .from("users")
         .select("user_id,full_name,email")
         .eq("role", "foreman")
-        .order("full_name", { ascending: true });
-      if (error) throw error;
+        .order("full_name", { ascending: true }), "user_id");
       return (data ?? []) as Array<{
         user_id: string;
         full_name: string | null;
@@ -369,10 +369,10 @@ export function TimesheetsTab({
         effective_to: string | null;
       }>
     > => {
-      const { data, error } = await dbAny
+      const data = await fetchAllPages(() => dbAny
         .from("employee_site_assignments")
-        .select("employee_id,site,foreman,project_id,foreman_user_id,effective_from,effective_to");
-      if (error) throw new Error(projectAccessError(error, "load"));
+        .select("employee_id,site,foreman,project_id,foreman_user_id,effective_from,effective_to"))
+        .catch((error: unknown) => { throw new Error(projectAccessError(error, "load")); });
       return (data ?? []) as Array<{
         employee_id: number;
         site: string;

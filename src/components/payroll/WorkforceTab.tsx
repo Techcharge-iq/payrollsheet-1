@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import type { Employee } from "@/lib/payroll";
 import { dbAny } from "@/integrations/supabase/external-client";
+import { fetchAllPages } from "@/lib/paged-query";
 import { useProjects } from "@/lib/management-data";
 import { projectAccessError } from "@/lib/project-access";
 import {
@@ -113,13 +114,12 @@ export function WorkforceTab({
   const salaries = useQuery({
     queryKey: ["employee_salary_history"],
     queryFn: async () => {
-      const { data, error } = await dbAny.from("employee_salary_history").select("*");
-      if (error) throw error;
+      const data = await fetchAllPages<SalaryRecord & Record<string, unknown>>(() => dbAny.from("employee_salary_history").select("*"));
       return (data ?? [])
-        .map((row: Record<string, unknown>) => ({
+        .map((row) => ({
           ...row,
           ...normalizeSalaryHistory([row])[0],
-        }))
+        } as SalaryRecord))
         .sort(
           (a: SalaryRecord, b: SalaryRecord) =>
             (b.effective_from ?? "").localeCompare(a.effective_from ?? "") ||
@@ -146,12 +146,12 @@ export function WorkforceTab({
   const assignments = useQuery({
     queryKey: ["employee_site_assignments"],
     queryFn: async () => {
-      const { data, error } = await dbAny
+      const data = await fetchAllPages<Assignment>(() => dbAny
         .from("employee_site_assignments")
         .select("*")
-        .order("effective_from", { ascending: false });
-      if (error) throw new Error(projectAccessError(error, "load"));
-      return (data ?? []) as Assignment[];
+        .order("effective_from", { ascending: false }))
+        .catch((error: unknown) => { throw new Error(projectAccessError(error, "load")); });
+      return data;
     },
   });
   const projects = useProjects();

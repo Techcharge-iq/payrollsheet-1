@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { dbAny } from "@/integrations/supabase/external-client";
+import { fetchAllPages } from "./paged-query";
 
 export interface ManagedUser {
   user_id: string;
@@ -27,12 +28,11 @@ export function useManagedUsers(enabled = true) {
     queryKey: ["management", "users"],
     enabled,
     queryFn: async (): Promise<ManagedUser[]> => {
-      const { data, error } = await dbAny
+      const data = await fetchAllPages<ManagedUser>(() => dbAny
         .from("users")
         .select("user_id,email,full_name,role,is_active,created_at")
-        .order("full_name", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as ManagedUser[];
+        .order("full_name", { ascending: true }), "user_id");
+      return data;
     },
     staleTime: 30_000,
   });
@@ -42,11 +42,11 @@ export function useProjects(includeInactive = false) {
   return useQuery({
     queryKey: ["projects", includeInactive ? "all" : "active"],
     queryFn: async (): Promise<Project[]> => {
-      let query = dbAny.from("projects").select("*").order("name", { ascending: true });
-      if (!includeInactive) query = query.eq("active", true);
-      const { data, error } = await query;
-      if (error) throw error;
-      return (data ?? []) as Project[];
+      return fetchAllPages<Project>(() => {
+        let query = dbAny.from("projects").select("*").order("name", { ascending: true });
+        if (!includeInactive) query = query.eq("active", true);
+        return query;
+      });
     },
     staleTime: 30_000,
   });
@@ -56,14 +56,13 @@ export function useActiveForemen() {
   return useQuery({
     queryKey: ["management", "active-foremen"],
     queryFn: async (): Promise<ManagedUser[]> => {
-      const { data, error } = await dbAny
+      const data = await fetchAllPages<ManagedUser>(() => dbAny
         .from("users")
         .select("user_id,email,full_name,role,is_active,created_at")
         .eq("role", "foreman")
         .eq("is_active", true)
-        .order("full_name", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as ManagedUser[];
+        .order("full_name", { ascending: true }), "user_id");
+      return data;
     },
     staleTime: 30_000,
   });

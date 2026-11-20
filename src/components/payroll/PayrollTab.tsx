@@ -68,6 +68,7 @@ import {
 import { btnGold, btnIcon, btnOutline, btnPrimary, card, input, inputSm, select } from "./ui";
 import { NewAdvanceValue } from "./NewAdvanceValue";
 import { dbAny } from "@/integrations/supabase/external-client";
+import { fetchAllPages } from "@/lib/paged-query";
 import {
   effectiveRateForMonth,
   effectiveRateOnDate,
@@ -548,13 +549,14 @@ export function PayrollTab({
   const salaryHistoryQuery = useQuery({
     queryKey: ["employee_salary_history"],
     queryFn: async (): Promise<SalaryHistoryRecord[]> => {
-      const { data, error } = await dbAny.from("employee_salary_history").select("*");
-      if (error) {
+      try {
+        const data = await fetchAllPages(() => dbAny.from("employee_salary_history").select("*"));
+        return normalizeSalaryHistory(data);
+      } catch (error) {
         // Never block payroll on salary history; fall back to current hourly rates.
-        console.warn("Salary history unavailable, using current hourly rates:", error.message);
+        console.warn("Salary history unavailable, using current hourly rates:", error);
         return [];
       }
-      return normalizeSalaryHistory(data ?? []);
     },
   });
   const salaryHistory = salaryHistoryQuery.data ?? [];

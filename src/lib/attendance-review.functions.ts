@@ -4,6 +4,14 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { dbAny } from "@/integrations/supabase/external-client";
 import type { Database as ExternalDatabase } from "@/integrations/supabase/external-types";
 import { z } from "zod";
+import { fetchAllPages } from "./paged-query";
+
+function reviewReadError(prefix: string, error: unknown): never {
+  const message = error && typeof error === "object" && "message" in error
+    ? String(error.message)
+    : String(error);
+  throw new Error(`${prefix}: ${message}`);
+}
 
 const modelReview = z.object({
   missingEmployeeIds: z.array(z.number().int().positive()).max(2000),
@@ -96,52 +104,42 @@ export const reviewProjectAttendance = createServerFn({ method: "POST" })
       );
     }
 
-    let assignmentsQuery = supabase
+    const assignmentsQuery = () => {
+      let query = supabase
       .from("employee_site_assignments")
       .select("employee_id")
       .eq("project_id", data.projectId)
       .lte("effective_from", data.workDate)
       .or(`effective_to.is.null,effective_to.gte.${data.workDate}`);
-    if (profile.role === "foreman") {
-      assignmentsQuery = assignmentsQuery.eq("foreman_user_id", context.userId);
-    }
-    const [assignmentsResult, entriesResult] = await Promise.all([
-      assignmentsQuery,
-      supabase
+      if (profile.role === "foreman") {
+        query = query.eq("foreman_user_id", context.userId);
+      }
+      return query;
+    };
+    const [assignments, entries] = await Promise.all([
+      fetchAllPages(assignmentsQuery).catch((error: unknown) =>
+        reviewReadError("Could not load assigned employees for attendance review", error)),
+      fetchAllPages(() => supabase
         .from("timesheets")
         .select("employee_id,status,in_time,out_time,break_hours,overtime_hours,remarks")
         .eq("project_id", data.projectId)
-        .eq("work_date", data.workDate),
+        .eq("work_date", data.workDate)).catch((error: unknown) =>
+          reviewReadError("Could not load project timesheets for review", error)),
     ]);
-    if (assignmentsResult.error) {
-      throw new Error(
-        `Could not load assigned employees for attendance review: ${assignmentsResult.error.message}`,
-      );
-    }
-    if (entriesResult.error) {
-      throw new Error(
-        `Could not load project timesheets for review: ${entriesResult.error.message}`,
-      );
-    }
 
     const assignedIds = [
-      ...new Set((assignmentsResult.data ?? []).map((assignment) => assignment.employee_id)),
+      ...new Set(assignments.map((assignment) => assignment.employee_id)),
     ];
-    const entries = entriesResult.data ?? [];
     const employeeIds = [
       ...new Set([...assignedIds, ...entries.map((entry) => entry.employee_id)]),
     ];
-    const employeesResult =
+    const employeeRows =
       employeeIds.length > 0
-        ? await supabase.from("employees").select("id,name,status").in("id", employeeIds)
-        : { data: [], error: null };
-    if (employeesResult.error) {
-      throw new Error(
-        `Could not load project employees for attendance review: ${employeesResult.error.message}`,
-      );
-    }
+        ? await fetchAllPages(() => supabase.from("employees").select("id,name,status").in("id", employeeIds))
+          .catch((error: unknown) => reviewReadError("Could not load project employees for attendance review", error))
+        : [];
 
-    const employees = (employeesResult.data ?? []).map((employee) => ({
+    const employees = employeeRows.map((employee) => ({
       id: employee.id,
       name: employee.name,
       status: employee.status,
@@ -300,27 +298,21 @@ export const reviewDailyAttendance = createServerFn({ method: "POST" })
       );
     }
 
-    const [employeesResult, entriesResult] = await Promise.all([
-      dbAny.from("employees").select("id,name,status").eq("status", "Active"),
-      dbAny
+    const [employeeRows, entryRows] = await Promise.all([
+      fetchAllPages(() => dbAny.from("employees").select("id,name,status").eq("status", "Active"))
+        .catch((error: unknown) => reviewReadError("Could not load active employees for attendance review", error)),
+      fetchAllPages(() => dbAny
         .from("timesheets")
         .select("employee_id,status,total_hours")
-        .eq("work_date", data.workDate),
+        .eq("work_date", data.workDate))
+        .catch((error: unknown) => reviewReadError("Could not load saved attendance for review", error)),
     ]);
-    if (employeesResult.error) {
-      throw new Error(
-        `Could not load active employees for attendance review: ${employeesResult.error.message}`,
-      );
-    }
-    if (entriesResult.error) {
-      throw new Error(`Could not load saved attendance for review: ${entriesResult.error.message}`);
-    }
 
     const employees = (
-      (employeesResult.data ?? []) as Array<{ id: number; name: string; status: string }>
+      employeeRows as Array<{ id: number; name: string; status: string }>
     ).map(({ id, name }) => ({ id, name }));
     const entries = (
-      (entriesResult.data ?? []) as Array<{
+      entryRows as Array<{
         employee_id: number;
         status: string;
         total_hours: number | string;

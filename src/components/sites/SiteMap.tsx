@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { dbAny } from "@/integrations/supabase/external-client";
+import { fetchAllPages } from "@/lib/paged-query";
+import type { Tables } from "@/integrations/supabase/external-types";
 import { useProjects, type Project } from "@/lib/management-data";
 import { btnGold, btnOutline, card, input, select } from "@/components/payroll/ui";
 
@@ -76,19 +78,19 @@ export function SiteMap({ onSelectSite, className = "", height = "520px" }: Site
     queryKey: ["site_map_data"],
     queryFn: async () => {
       // 1. Fetch site allocations
-      const { data: allocations } = await dbAny
+      const allocations = await fetchAllPages<Pick<Tables<"site_allocations">, "site_id" | "site_name" | "latitude" | "longitude" | "trade" | "worker_count">>(() => dbAny
         .from("site_allocations")
-        .select("site_id, site_name, latitude, longitude, trade, worker_count");
+        .select("site_id, site_name, latitude, longitude, trade, worker_count"));
 
       // 2. Fetch employee site assignments
-      const { data: assignments } = await dbAny
+      const assignments = await fetchAllPages<Pick<Tables<"employee_site_assignments">, "employee_id" | "site" | "project_id">>(() => dbAny
         .from("employee_site_assignments")
-        .select("employee_id, site, project_id");
+        .select("employee_id, site, project_id"));
 
       // 3. Fetch employee trades
-      const { data: employees } = await dbAny
+      const employees = await fetchAllPages<{ id: number; trade?: string }>(() => dbAny
         .from("employees")
-        .select("id, trade, status");
+        .select("id, trade, status"));
 
       const empTradeMap = new Map<number, string>();
       (employees ?? []).forEach((e: { id: number; trade?: string }) => {
@@ -113,7 +115,7 @@ export function SiteMap({ onSelectSite, className = "", height = "520px" }: Site
 
     return projects.map((p, index) => {
       const pAlloc = details?.allocations.filter(
-        (a: { site_id?: string; site_name?: string }) =>
+        (a) =>
           (a.site_id && a.site_id === p.id) ||
           (a.site_name && a.site_name.trim().toLowerCase() === p.name.trim().toLowerCase()),
       );
@@ -158,7 +160,7 @@ export function SiteMap({ onSelectSite, className = "", height = "520px" }: Site
 
       // From assignments
       const siteAssignments = details?.assignments.filter(
-        (asgn: { project_id?: string; site?: string }) =>
+        (asgn) =>
           (asgn.project_id && asgn.project_id === p.id) ||
           (asgn.site && asgn.site.trim().toLowerCase() === p.name.trim().toLowerCase()),
       );
@@ -170,7 +172,7 @@ export function SiteMap({ onSelectSite, className = "", height = "520px" }: Site
           totalAssigned += 1;
         });
       } else if (pAlloc && pAlloc.length > 0) {
-        pAlloc.forEach((a: { trade?: string; worker_count?: number }) => {
+        pAlloc.forEach((a) => {
           const trade = a.trade || "GENERAL";
           const count = Number(a.worker_count || 1);
           trades[trade] = (trades[trade] || 0) + count;

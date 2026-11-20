@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 
 const supabaseUrl = "https://milcjipktyhlwiriujrw.supabase.co";
@@ -183,7 +184,9 @@ async function mockPayrollBackend(
       const records = state[table as keyof MockState];
       if (method === "GET") {
         reads.set(table, (reads.get(table) ?? 0) + 1);
-        await route.fulfill({ json: records });
+        const offset = Number(url.searchParams.get("offset") ?? 0);
+        const limit = Number(url.searchParams.get("limit") ?? 1000);
+        await route.fulfill({ json: records.slice(offset, offset + limit) });
         return;
       }
 
@@ -1372,8 +1375,8 @@ test("attendance report shows daily hours and hover details in the site matrix",
   await openTab(page, "Attendance Report", false);
   await expect(page.getByRole("heading", { name: "Attendance report" })).toBeVisible();
   await page.getByRole("button", { name: "Filter by site" }).click();
-  await expect(page.getByLabel("Site").getByRole("option", { name: "East Yard" })).toBeAttached();
-  await page.getByLabel("Site").selectOption({ label: "North Campus" });
+  await expect(page.getByRole("combobox", { name: /^Site/ }).getByRole("option", { name: "East Yard" })).toBeAttached();
+  await page.getByRole("combobox", { name: /^Site/ }).selectOption({ label: "North Campus" });
 
   await expect(page.getByText("10.5", { exact: true })).toBeVisible();
   await expect(page.locator('[aria-label$=": T"]')).toBeVisible();
@@ -1399,6 +1402,81 @@ test("Supabase Realtime updates Dexie without another table fetch", async ({ pag
   await page.getByPlaceholder("Search by name or ID…").fill("Asha Realtime");
   await expect(page.getByRole("cell", { name: "Asha Realtime" })).toBeVisible();
   expect(backend.reads.get("employees")).toBe(1);
+});
+
+test("busy-month attendance, site roster, payroll preview and Annexure include records beyond 1,000", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 1800 });
+  const backend = await mockPayrollBackend(page, "admin");
+  const month = new Date().toISOString().slice(0, 7);
+  backend.state.employees = Array.from({ length: 1001 }, (_, index) => ({
+    id: index + 1, name: index === 1000 ? "Late Worker" : `Worker ${index + 1}`,
+    trade: "Electrician", id_number: `E-${index + 1}`, hourly_rate: 3,
+    default_food_deduction: 0, status: "Active", created_at: timestamp,
+  }));
+  backend.state.employee_site_assignments = Array.from({ length: 1001 }, (_, index) => ({
+    id: `assignment-${index}`, employee_id: index + 1,
+    site: index === 1000 ? "North Campus" : "East Yard",
+    project_id: index === 1000 ? northCampusId : "00000000-0000-4000-8000-000000000011",
+    foreman: "Samir Foreman", foreman_user_id: foremanUserId,
+    effective_from: "2020-01-01", effective_to: null,
+  }));
+  backend.state.timesheets = [
+    ...Array.from({ length: 1000 }, (_, index) => ({
+      id: `other-${index}`, employee_id: index + 1, site: "East Yard",
+      project_id: "00000000-0000-4000-8000-000000000011", work_date: `${month}-01`,
+      regular_hours: 8, total_hours: 8, overtime_hours: 0, status: "PRESENT",
+    })),
+    ...Array.from({ length: 28 }, (_, index) => ({
+      id: `selected-${index}`, employee_id: 1001, site: "North Campus", project_id: northCampusId,
+      foreman: "Samir Foreman", foreman_user_id: foremanUserId,
+      work_date: `${month}-${String(index + 1).padStart(2, "0")}`,
+      regular_hours: 8, total_hours: 8, overtime_hours: 0, status: "PRESENT",
+    })),
+  ];
+  await page.route(`${supabaseUrl}/rest/v1/projects?*`, async route => {
+    if (new URL(route.request().url()).searchParams.has("name")) {
+      await route.fulfill({ json: backend.state.projects[0] });
+    } else {
+      await route.fallback();
+    }
+  });
+  await page.goto("/");
+  await expect(page.getByRole("navigation", { name: "Application menu" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
+  await expect.poll(() => backend.reads.get("employees")).toBe(2);
+  await expect.poll(() => backend.reads.get("timesheets")).toBe(2);
+
+  await openTab(page, "Daily Timesheets", false);
+  await page.getByRole("button", { name: /North Campus/ }).click();
+  await expect(page.getByRole("dialog", { name: "Daily timesheet editor" }).getByText("Late Worker", { exact: true })).toBeVisible();
+  await page.getByRole("dialog", { name: "Daily timesheet editor" }).screenshot({ path: testInfo.outputPath("site-roster.png") });
+  await page.getByRole("button", { name: "Close", exact: true }).first().click();
+
+  await openTab(page, "Monthly Payroll", false);
+  await page.getByLabel("Site for payroll generation").selectOption("North Campus");
+  await page.getByRole("button", { name: "Preview Payroll" }).click();
+  const preview = page.getByRole("row", { name: /Late WorkerE-1001/ });
+  await expect(preview).toBeVisible();
+  await expect(preview.getByRole("cell", { name: "224.00", exact: true })).toBeVisible();
+  await expect(preview.getByRole("cell", { name: "672.00", exact: true }).first()).toBeVisible();
+  await preview.screenshot({ path: testInfo.outputPath("payroll-preview.png") });
+  await page.getByRole("button", { name: "Close preview" }).click();
+
+  await openTab(page, "Attendance Report", false);
+  await page.getByRole("button", { name: "Filter by site" }).click();
+  await page.getByRole("combobox", { name: /^Site/ }).selectOption({ label: "North Campus" });
+  await expect(page.getByText("Late Worker", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("attendance-report.png") });
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export Annexure A (PDF)" }).click();
+  const download = await downloadPromise;
+  const path = testInfo.outputPath("busy-month-annexure.pdf");
+  await download.saveAs(path);
+  const pdf = await readFile(path, "latin1");
+  expect(pdf).toContain("(Late Worker)");
+  expect(pdf).toContain("(224.0 h)");
+  expect(pdf).toContain("(28)");
+  expect(pdf).not.toContain("(Worker 1)");
 });
 
 test("HR can prepare payroll but does not get approval or deletion controls", async ({ page }) => {

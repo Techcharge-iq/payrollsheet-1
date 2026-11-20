@@ -19,6 +19,7 @@ import type { Employee } from "@/lib/payroll";
 import { useTimesheetsForMonth, type TimesheetRecord } from "@/lib/payroll-data";
 import { useProjects } from "@/lib/management-data";
 import { dbAny } from "@/integrations/supabase/external-client";
+import { fetchAllPages } from "@/lib/paged-query";
 import {
   Dialog,
   DialogContent,
@@ -416,11 +417,10 @@ export function MonthlyAttendanceDialog({
     queryKey: ["employee_site_assignments", "monthly", singleEmployeeId],
     enabled: Boolean(singleEmployeeId),
     queryFn: async () => {
-      const { data, error } = await dbAny
+      const data = await fetchAllPages(() => dbAny
         .from("employee_site_assignments")
         .select("site,foreman,project_id,foreman_user_id,effective_from,effective_to")
-        .eq("employee_id", Number(singleEmployeeId));
-      if (error) throw error;
+        .eq("employee_id", Number(singleEmployeeId)));
       return (data ?? []) as Array<{
         site: string;
         foreman: string;
@@ -444,12 +444,11 @@ export function MonthlyAttendanceDialog({
     queryFn: async (): Promise<
       Array<{ user_id: string; full_name: string | null; email: string | null }>
     > => {
-      const { data, error } = await dbAny
+      const data = await fetchAllPages(() => dbAny
         .from("users")
         .select("user_id,full_name,email")
         .eq("role", "foreman")
-        .order("full_name", { ascending: true });
-      if (error) throw error;
+        .order("full_name", { ascending: true }), "user_id");
       return (data ?? []) as Array<{
         user_id: string;
         full_name: string | null;
