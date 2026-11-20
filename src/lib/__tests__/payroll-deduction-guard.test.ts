@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { assertPayrollDeductionLimits, type GuardedPayrollRow } from "../payroll-deduction-guard";
 import type { PayrollBatch, AdvanceTx } from "../payroll";
 const batches = [
-  { id: "a", site: "Adam", month: "2026-10", status: "DRAFT", lines: [{ id: "la", employee_id: 7, food_deduction: 15, prev_advance: 0, new_advance: 0 }] },
+  { id: "a", site: "Adam", month: "2026-10", status: "DRAFT", lines: [{ id: "la", employee_id: 7, food_deduction: 15, prev_advance: 0, new_advance: 0, paid: 0 }] },
   { id: "b", site: "T-59", month: "2026-10", status: "DRAFT", lines: [] },
 ] as unknown as PayrollBatch[];
 const entries = [{ employee_id: 7, site: "Adam", work_date: "2026-10-10", status: "PRESENT" }, { employee_id: 7, site: "T-59", work_date: "2026-10-20", status: "PRESENT" }];
@@ -20,7 +20,7 @@ describe("October multi-site save deduction guard", () => {
     expect(() => assertPayrollDeductionLimits([{ ...row, id: "la", batch_id: "a" }], batches, advances, entries, defaults)).toThrow("last active site");
   });
   it("reserves advances recovered in other batches", () => {
-    const reserved = [{ ...batches[0], lines: [{ employee_id: 7, food_deduction: 15, prev_advance: 80, new_advance: 0 }] }, batches[1]] as PayrollBatch[];
+    const reserved = [{ ...batches[0], lines: [{ employee_id: 7, food_deduction: 15, prev_advance: 80, new_advance: 0, paid: 0 }] }, batches[1]] as PayrollBatch[];
     expect(() => assertPayrollDeductionLimits([row], reserved, advances, entries, defaults)).toThrow("remaining balance");
   });
   it("caps recovery at net site earnings", () => {
@@ -31,5 +31,9 @@ describe("October multi-site save deduction guard", () => {
     const before = JSON.stringify(paid);
     expect(() => assertPayrollDeductionLimits([row], paid, advances, entries, defaults)).toThrow("Paid payroll records");
     expect(JSON.stringify(paid)).toBe(before);
+  });
+  it("protects partially paid draft lines even before the batch status changes", () => {
+    const partial = batches.map((batch) => batch.id === "b" ? { ...batch, lines: [{ employee_id: 7, paid: 1 }] } : batch) as PayrollBatch[];
+    expect(() => assertPayrollDeductionLimits([row], partial, advances, entries, defaults)).toThrow("Paid payroll records");
   });
 });

@@ -24,6 +24,11 @@ export function assertNoDuplicateSitePayroll(
   for (const row of rows) {
     const target = byId.get(row.batch_id);
     if (!target) throw new Error("The payroll batch was not found. Refresh and retry.");
+    const original = row.id ? existing.find((line) => line.id === row.id) : undefined;
+    if (row.id && !original) throw new Error("The existing payroll line was not found. Refresh and retry.");
+    if (original && (original.batch_id !== row.batch_id || original.employee_id !== row.employee_id)) {
+      throw new Error("Existing payroll lines cannot be moved to another batch or reassigned to another employee.");
+    }
     const key = `${row.batch_id}:${row.employee_id}`;
     if (pending.has(key)) throw new Error("An employee is listed more than once in this payroll batch.");
     pending.add(key);

@@ -31,7 +31,10 @@ export function DeleteOnlyTab({ employees, batches, onDeleted, onError }: Props)
       if (request.type === "payroll") {
         const result = await deletePayrollRecord({ data: request });
         const lines = await readCachedRows<{ id: string; batch_id: string }>("payroll_lines");
-        await deleteCachedRows("payroll_lines", lines.filter((line) => line.batch_id === request.id).map((line) => line.id));
+        const deletedIds = new Set(lines.filter((line) => line.batch_id === request.id).map((line) => line.id));
+        await deleteCachedRows("payroll_lines", [...deletedIds]);
+        const allocations = await readCachedRows<{ id: string; payroll_line_id: string }>("payroll_site_allocations");
+        await deleteCachedRows("payroll_site_allocations", allocations.filter((allocation) => deletedIds.has(allocation.payroll_line_id)).map((allocation) => allocation.id));
         await deleteCachedRows("payroll_batches", [request.id]);
         return result;
       }

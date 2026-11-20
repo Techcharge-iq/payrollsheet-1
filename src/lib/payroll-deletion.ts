@@ -5,13 +5,17 @@ export interface DeletablePayrollBatch {
 }
 
 /** Payment markers and any nonzero payment protect the whole batch. */
+export function hasProtectedPayrollPayment(batch: DeletablePayrollBatch): boolean {
+  return batch.status === "PAID" || !!batch.paid_at || batch.lines.some((line) => {
+    if (line.paid === null || line.paid === undefined) return true;
+    const paid = Number(line.paid);
+    return !Number.isFinite(paid) || paid !== 0;
+  });
+}
+
 export function canDeleteUnpaidPayroll(batch: DeletablePayrollBatch): boolean {
   if (!["DRAFT", "REVIEW", "APPROVED", "LEGACY"].includes(batch.status)) return false;
-  if (batch.paid_at) return false;
-  return batch.lines.every((line) => {
-    const paid = Number(line.paid);
-    return Number.isFinite(paid) && paid === 0;
-  });
+  return !hasProtectedPayrollPayment(batch);
 }
 
 export function assertUnpaidPayrollDeletion(batch: DeletablePayrollBatch): void {

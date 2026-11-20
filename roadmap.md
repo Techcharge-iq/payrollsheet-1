@@ -1,4 +1,5 @@
 # Fix roadmap
+- [x] Sweep remaining edit, approval, payment, deletion and cache paths for paid-record protection and duplicate deductions; fix future behavior and record external database blockers. 71 unit tests and isolated Delete-control browser checks passed.
 - [x] Add confirmed deletion controls for unpaid Legacy and Approved batches in both payroll deletion screens; shared payment protection and atomic server call added. Browser fixture check passed; live deletion blocked by missing external SQL routine.
 - [x] Add fresh server checks for site/month food limits, last-site advances, remaining balance, site-net cap and paid record protection; canonicalize saved month from batch. 67 tests passed, latest build OK.
 - [ ] Verify actual October 2026 save/delete end-to-end and apply external uniqueness/allocation/unpaid-deletion repairs (blocked: no external schema execution connection; managed tools target a different database).
@@ -59,3 +60,19 @@ Remaining verification/implementation blockers:
 - External API confirmed delete_unpaid_payroll_batch is absent. No SQL repair was executed: available managed migration/data tools are not connected to payroll's external database. SQL syntax/deployed lifecycle compatibility remains unverified.
 - Browser fixture check: Legacy and Approved Delete visible, Paid Delete absent, cancellation unchanged, confirmation invokes only selected fixture ID. This was an isolated component check, not authenticated live deletion.
 - Full unit suite: 67 passed; latest compilation OK. Live multi-site save, atomic deletion, concurrent deduction enforcement, and finalization ledger remain unverified. Existing real deductions were not automatically corrected.
+
+## Follow-up flow sweep
+
+Rule: multi-site payroll must not repeat deductions, and deleting/editing unpaid payroll must not alter any payment-bearing history.
+
+Code checked in this conversation:
+- Monthly Payroll search, preview/generation, imports and save: site lock and server deduction checks follow the rule for sequential requests; database concurrency remains blocked. Existing line IDs now cannot be reassigned to a different employee or moved to another batch.
+- Monthly Payroll edits, approval and Mark paid: partial-payment batches previously remained editable until status became Paid. Now any existing payment or payment timestamp blocks edits/status actions. Approval/Mark paid recheck site food, advance location and outstanding caps in the UI before updating status.
+- Save hook, alternate metadata update and foreman update: fresh payment reads now happen before any changes, including batch metadata previously written before the server line guard. Status hook also rechecks payment state. These are sequential application checks, not a substitute for atomic external triggers.
+- Both Delete screens and authorized delete function: same eligibility, confirmation and payment guards; null/invalid payment values now fail closed consistently with prepared SQL. Transaction routine remains absent externally.
+- Employee deletion server flow: cascading employee deletion could remove payment-bearing history. It now reads related payroll lines/batches and refuses deletion where paid history exists. The deployed employee-delete SQL still needs transactional payment enforcement to prevent concurrent payment/delete races; no live deletion was performed.
+- Deletion cache cleanup: both paths now remove only selected batch's line and allocation cache rows, preventing stale Cost Allocation rows after successful deletion. Realtime uses IDs and invalidates payroll, monthly lines and advance balances.
+- Dashboard, Employee History, Advances, salary slips, payroll PDF/share, WPS and Cost Allocation/View List/PDF/CSV/share were source-reviewed in this conversation: they consume saved lines/allocations without modifying paid rows; separate-site lines are retained and payroll deduction totals sum each line once. Report appearance and live exports not verified.
+- SQL reviewed: month-sync uses batch identity; advance-balances aggregates line recoveries; original uniqueness and allocation routines need the prepared external repairs; batch/line/allocation lifecycle triggers conflict with unpaid Approved/Legacy deletion until the guarded deletion routine is installed. Admin diagnostics checks columns/storage only, not constraint correctness.
+
+Remaining: external uniqueness, allocation and safe-deletion repairs were not executed; live authenticated October save/delete/approval, ledger finalization, schema compatibility, and concurrent protections remain unverified. Available migration tools still target the wrong database. No settled rows, permissions, settings or example data changed.

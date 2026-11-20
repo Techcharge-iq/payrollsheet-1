@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertUnpaidPayrollDeletion, canDeleteUnpaidPayroll } from "../payroll-deletion";
+import { assertUnpaidPayrollDeletion, canDeleteUnpaidPayroll, hasProtectedPayrollPayment } from "../payroll-deletion";
 
 describe("unpaid payroll deletion", () => {
   it("allows the marked unpaid Legacy T-57 batch", () => {
@@ -20,5 +20,12 @@ describe("unpaid payroll deletion", () => {
   });
   it("fails closed on invalid amounts and rejects deletion before writes", () => {
     expect(() => assertUnpaidPayrollDeletion({ status: "DRAFT", lines: [{ paid: "invalid" }] })).toThrow("Paid records are protected");
+  });
+  it("protects missing payment values consistently with database deletion", () => {
+    expect(canDeleteUnpaidPayroll({ status: "LEGACY", lines: [{ paid: null }] })).toBe(false);
+    expect(canDeleteUnpaidPayroll({ status: "APPROVED", lines: [{ paid: undefined }] })).toBe(false);
+  });
+  it("protects payments before status changes to Paid", () => {
+    expect(hasProtectedPayrollPayment({ status: "DRAFT", lines: [{ paid: 1 }] })).toBe(true);
   });
 });

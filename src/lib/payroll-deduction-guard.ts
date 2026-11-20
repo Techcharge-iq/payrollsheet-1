@@ -1,5 +1,6 @@
 import { advanceCarryForward, toNum, type AdvanceTx, type PayrollBatch, type PayrollLine } from "./payroll";
 import { lastActiveSite, priorMonthlyFood, proratedFood, sameSite, siteDayShare, type SiteEntry } from "./multi-site-payroll";
+import { hasProtectedPayrollPayment } from "./payroll-deletion";
 
 export interface GuardedPayrollRow {
   id?: string;
@@ -25,7 +26,7 @@ export function assertPayrollDeductionLimits(
   for (const row of rows) {
     const batch = batches.find((item) => item.id === row.batch_id);
     if (!batch) throw new Error("Payroll batch was not found.");
-    if (batch.status === "PAID" || batch.paid_at) throw new Error("Paid payroll records cannot be changed by this save.");
+    if (hasProtectedPayrollPayment(batch)) throw new Error("Paid payroll records cannot be changed by this save.");
     const amounts = [row.food_deduction, row.prev_advance, row.new_advance, row.gross_pay, row.other_deduction];
     if (amounts.some((amount) => !Number.isFinite(amount) || amount < 0)) throw new Error("Payroll deductions and earnings must be valid non-negative amounts.");
     const monthlyFood = priorMonthlyFood(batches, row.employee_id, batch.month, foodDefaults.get(row.employee_id) ?? 0);

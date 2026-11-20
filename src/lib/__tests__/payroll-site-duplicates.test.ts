@@ -37,4 +37,7 @@ describe("server payroll duplicate preflight", () => {
       { batch_id: "t59", employee_id: 7 },
     ], batches, [])).not.toThrow();
   });
+  it("rejects changing the employee attached to an existing payroll line", () => {
+    expect(() => assertNoDuplicateSitePayroll([{ id: "paid-line", batch_id: "adam", employee_id: 8 }], batches, existing)).toThrow("reassigned");
+  });
 });

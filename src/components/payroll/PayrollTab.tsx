@@ -72,7 +72,8 @@ import { btnGold, btnIcon, btnOutline, btnPrimary, card, input, inputSm, select 
 import { NewAdvanceValue } from "./NewAdvanceValue";
 import { dbAny } from "@/integrations/supabase/external-client";
 import { fetchAllPages } from "@/lib/paged-query";
-import { canDeleteUnpaidPayroll } from "@/lib/payroll-deletion";
+import { canDeleteUnpaidPayroll, hasProtectedPayrollPayment } from "@/lib/payroll-deletion";
+import { assertPayrollDeductionLimits } from "@/lib/payroll-deduction-guard";
 import {
   effectiveRateForMonth,
   effectiveRateOnDate,
@@ -955,6 +956,10 @@ export function PayrollTab({
   const startEdit = (batch: PayrollBatch) => {
     setImportErrors([]);
     setSubmitError("");
+    if (hasProtectedPayrollPayment(batch)) {
+      notify("Payroll with recorded payments cannot be edited. Paid records are protected.", "warn");
+      return;
+    }
     if (!canDelete && !["DRAFT", "REVIEW"].includes(batch.status)) {
       notify(`Payroll batch in ${batch.status} status cannot be edited.`, "warn");
       return;
@@ -1250,6 +1255,27 @@ export function PayrollTab({
   };
 
   const changeStatus = async (batch: PayrollBatch, status: PayrollBatchStatus) => {
+    if (hasProtectedPayrollPayment(batch)) {
+      notify("Payroll with recorded payments cannot be changed. Paid records are protected.", "warn");
+      return;
+    }
+    if (status === "APPROVED" || status === "PAID") {
+      try {
+        assertPayrollDeductionLimits(batch.lines.map((line) => ({
+          ...(line.id ? { id: line.id } : {}),
+          batch_id: batch.id,
+          employee_id: Number(line.employee_id),
+          food_deduction: toNum(line.food_deduction),
+          prev_advance: toNum(line.prev_advance),
+          new_advance: toNum(line.new_advance),
+          gross_pay: lineGross(line),
+          other_deduction: toNum(line.other_deduction),
+        })), batches, advances, timesheets, new Map(employees.map((employee) => [employee.id, toNum(employee.default_food_deduction ?? defaultFoodDeduction)])));
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "Could not reconcile payroll deductions.", "warn");
+        return;
+      }
+    }
     if (status === "APPROVED") {
       const otherBatchEmployees = lockedEmployeeIds(batches, batch.month, batch.id, batch.site);
       const issues = validateBatch(
@@ -2254,7 +2280,7 @@ export function PayrollTab({
               >
                 <Eye size={14} /> View
               </button>
-              {(canDelete || ["DRAFT", "REVIEW"].includes(b.status)) && (
+              {!hasProtectedPayrollPayment(b) && (canDelete || ["DRAFT", "REVIEW"].includes(b.status)) && (
                 <button onClick={() => startEdit(b)} className={btnPrimary}>
                   <Pencil size={14} /> Edit
                 </button>
@@ -2286,7 +2312,7 @@ export function PayrollTab({
                   </button>
                 </>
               )}
-              {canDelete && ["APPROVED", "LOCKED"].includes(b.status) && (
+              {canDelete && !hasProtectedPayrollPayment(b) && ["APPROVED", "LOCKED"].includes(b.status) && (
                 <button
                   type="button"
                   onClick={() => void changeStatus(b, "PAID")}

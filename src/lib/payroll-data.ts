@@ -7,10 +7,23 @@ import type { AdvanceTx, Employee, PayrollBatch, PayrollBatchStatus, PayrollLine
 import { calculatePayroll, PAYROLL_CALCULATION_VERSION, PAYROLL_POLICY, toNum } from "./payroll";
 import { deleteCachedRows, readCachedRows, writeCachedRows } from "./payroll-cache";
 import { attendanceBelongsToBatch, mergeDraftAllocations } from "./multi-site-payroll";
+import { hasProtectedPayrollPayment } from "./payroll-deletion";
+import { fetchAllPages } from "./paged-query";
 
 export type TimesheetRecord = Tables<"timesheets">;
 export type PayrollSiteAllocation = Tables<"payroll_site_allocations">;
 type TimesheetInsert = TablesInsert<"timesheets">;
+
+async function assertBatchHasNoPayments(id: string): Promise<void> {
+  const { data: batch, error } = await supabase.from("payroll_batches")
+    .select("status,paid_at").eq("id", id).single();
+  if (error) throw error;
+  const lines = await fetchAllPages<{ id: string; paid: number }>(() => supabase
+    .from("payroll_lines").select("id,paid").eq("batch_id", id));
+  if (hasProtectedPayrollPayment({ status: batch.status, paid_at: batch.paid_at, lines })) {
+    throw new Error("Payroll with recorded payments cannot be changed. Paid records are protected.");
+  }
+}
 
 interface AdvanceTransactionRecord extends Record<string, unknown> {
   id: string | number;
@@ -417,6 +430,7 @@ export function useSaveBatch(canDelete = false) {
         (policyRow as { overtime_multiplier: number | null } | null)?.overtime_multiplier ?? null;
       let batchId = batch.id;
       if (batchId) {
+        await assertBatchHasNoPayments(batchId);
         const { data, error } = await supabase
           .from("payroll_batches")
           .update({
@@ -547,6 +561,9 @@ export function useDeleteBatch() {
         lines.filter((line) => line.batch_id === id).map((line) => line.id),
       );
       await deleteCachedRows("payroll_batches", [id]);
+      const allocations = await readCachedRows<PayrollSiteAllocation>("payroll_site_allocations");
+      const deletedLineIds = new Set(lines.filter((line) => line.batch_id === id).map((line) => line.id));
+      await deleteCachedRows("payroll_site_allocations", allocations.filter((allocation) => deletedLineIds.has(allocation.payroll_line_id)).map((allocation) => allocation.id));
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["payroll_batches"] });
@@ -561,6 +578,7 @@ export function useUpdateBatchMeta() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, site, foreman }: { id: string; site: string; foreman: string }) => {
+      await assertBatchHasNoPayments(id);
       const { data, error } = await supabase
         .from("payroll_batches")
         .update({ site, foreman })
@@ -581,6 +599,7 @@ export function useUpdateBatchStatus() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, status }: { id: string; status: PayrollBatchStatus }) => {
+      await assertBatchHasNoPayments(id);
       const { data, error } = await supabase
         .from("payroll_batches")
         .update({ status })
@@ -601,6 +620,9 @@ export function useUpdateLineForeman() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, foreman }: { id: string; foreman: string }) => {
+      const { data: line, error: lineError } = await supabase.from("payroll_lines").select("batch_id").eq("id", id).single();
+      if (lineError) throw lineError;
+      await assertBatchHasNoPayments(line.batch_id);
       const { data, error } = await supabase
         .from("payroll_lines")
         .update({ foreman })

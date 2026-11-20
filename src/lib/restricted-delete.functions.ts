@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { assertUnpaidPayrollDeletion } from "./payroll-deletion";
+import { assertUnpaidPayrollDeletion, hasProtectedPayrollPayment } from "./payroll-deletion";
 import { fetchAllPages } from "./paged-query";
 
 const deleteInput = z.discriminatedUnion("type", [
@@ -31,6 +31,16 @@ export const deletePayrollRecord = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const admin = supabaseAdmin as unknown as SupabaseClient<any>;
     if (data.type === "employee") {
+      const payrollLines = await fetchAllPages<{ id: string; batch_id: string; paid: number }>(() => admin
+        .from("payroll_lines").select("id,batch_id,paid").eq("employee_id", data.id));
+      const batchIds = [...new Set(payrollLines.map((line) => line.batch_id))];
+      for (let start = 0; start < batchIds.length; start += 100) {
+        const batches = await fetchAllPages<{ id: string; status: string; paid_at: string | null }>(() => admin
+          .from("payroll_batches").select("id,status,paid_at").in("id", batchIds.slice(start, start + 100)));
+        if (batches.some((batch) => hasProtectedPayrollPayment({ ...batch, lines: payrollLines.filter((line) => line.batch_id === batch.id) }))) {
+          throw new Error("This employee has paid payroll history and cannot be deleted. Paid records are protected.");
+        }
+      }
       const { error } = await admin.rpc("delete_employee_with_history", {
         target_employee_id: data.id,
       });
