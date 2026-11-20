@@ -1,4 +1,5 @@
 import { savePayrollLines } from "@/lib/payroll-lines.functions";
+import { deletePayrollRecord } from "@/lib/restricted-delete.functions";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { db as supabase, dbAny } from "@/integrations/supabase/external-client";
 import type { Tables, TablesInsert } from "@/integrations/supabase/external-types";
@@ -539,14 +540,7 @@ export function useDeleteBatch() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      // Remove lines first; the line trigger rejects cascaded deletes after the batch is gone.
-      const { error: linesError } = await supabase
-        .from("payroll_lines")
-        .delete()
-        .eq("batch_id", id);
-      if (linesError) throw linesError;
-      const { error } = await supabase.from("payroll_batches").delete().eq("id", id);
-      if (error) throw error;
+      await deletePayrollRecord({ data: { type: "payroll", id } });
       const lines = await readCachedRows<Tables<"payroll_lines">>("payroll_lines");
       await deleteCachedRows(
         "payroll_lines",

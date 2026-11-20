@@ -11,3 +11,5 @@
 - Payroll save errors for the legacy employee-month constraint must identify the external schema repair, never suggest overwriting prior payroll; site-lock warnings describe inclusion, not payment status.
 - Multi-site payroll helpers aggregate prior-month food across site lines and reserve other batches' advance recoveries for entry/import/approval; draft allocation fallback uses batch site identity, while settled fallback remains unchanged.
 - Payroll-line saves run a fresh site/month duplicate preflight before ID-based upsert; database uniqueness remains required for concurrency and the external legacy constraint must be replaced separately.
+- Payroll deletion eligibility is shared by both screens and the server: unpaid Draft/Review/Approved/Legacy batches require confirmation; any payment marker, nonzero amount or Locked/Paid status protects the batch, and deletion uses an atomic database operation.
+- Server payroll saves canonicalize month from the target batch and verify monthly/site food, last-site advance recovery and remaining/net-earnings caps from fresh records; paid saves are rejected and concurrency still requires external database enforcement.

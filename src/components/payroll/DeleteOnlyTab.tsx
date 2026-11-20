@@ -4,8 +4,9 @@ import type { Employee, PayrollBatch } from "@/lib/payroll";
 import { monthLabel } from "@/lib/payroll";
 import { useProjects } from "@/lib/management-data";
 import { deletePayrollRecord } from "@/lib/restricted-delete.functions";
-import { deleteCachedRows } from "@/lib/payroll-cache";
+import { deleteCachedRows, readCachedRows } from "@/lib/payroll-cache";
 import { btnOutline, card } from "./ui";
+import { canDeleteUnpaidPayroll } from "@/lib/payroll-deletion";
 
 type DeleteRequest =
   { type: "employee"; id: number } | { type: "site"; id: string } | { type: "payroll"; id: string };
@@ -29,6 +30,8 @@ export function DeleteOnlyTab({ employees, batches, onDeleted, onError }: Props)
       }
       if (request.type === "payroll") {
         const result = await deletePayrollRecord({ data: request });
+        const lines = await readCachedRows<{ id: string; batch_id: string }>("payroll_lines");
+        await deleteCachedRows("payroll_lines", lines.filter((line) => line.batch_id === request.id).map((line) => line.id));
         await deleteCachedRows("payroll_batches", [request.id]);
         return result;
       }
@@ -54,7 +57,7 @@ export function DeleteOnlyTab({ employees, batches, onDeleted, onError }: Props)
         ? "Deleting an employee also permanently removes the employee’s payroll lines, attendance, site assignments, advances and salary history. "
         : request.type === "site"
           ? "Deleting a site removes its manager assignments; historical timesheet and payroll site names are retained. "
-          : "Only draft or review payroll batches can be deleted. ";
+          : "Only unpaid draft, review, approved or legacy payroll batches can be deleted. Paid and locked records are protected. ";
     if (window.confirm(`${warning}Delete ${label}? This cannot be undone.`)) {
       deletion.mutate(request);
     }
@@ -112,7 +115,7 @@ export function DeleteOnlyTab({ employees, batches, onDeleted, onError }: Props)
                     {deleteButton(
                       { type: "payroll", id: batch.id },
                       `${monthLabel(batch.month)} payroll for ${batch.site}`,
-                      !["DRAFT", "REVIEW"].includes(batch.status),
+                      !canDeleteUnpaidPayroll(batch),
                     )}
                   </td>
                 </tr>

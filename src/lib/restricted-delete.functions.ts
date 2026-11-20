@@ -3,6 +3,8 @@ import { createServerFn } from "@tanstack/react-start";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { assertUnpaidPayrollDeletion } from "./payroll-deletion";
+import { fetchAllPages } from "./paged-query";
 
 const deleteInput = z.discriminatedUnion("type", [
   z.object({ type: z.literal("employee"), id: z.number().int().positive() }),
@@ -43,20 +45,25 @@ export const deletePayrollRecord = createServerFn({ method: "POST" })
       return { type: data.type, id: data.id };
     }
 
-    // Delete lines while the batch still exists: the line lifecycle trigger rejects
-    // cascaded line deletes once the parent batch row is gone.
-    const { error: linesError } = await admin
-      .from("payroll_lines")
-      .delete()
-      .eq("batch_id", data.id);
-    if (linesError) throw new Error(`Could not delete payroll lines: ${linesError.message}`);
-    const { data: deleted, error } = await admin
+    const { data: batch, error: batchError } = await admin
       .from("payroll_batches")
-      .delete()
+      .select("id,status,paid_at")
       .eq("id", data.id)
-      .select("id")
       .maybeSingle();
+    if (batchError) throw new Error(`Could not check payroll payments: ${batchError.message}`);
+    if (!batch) throw new Error("The payroll batch was not found or was already deleted.");
+    const lines = await fetchAllPages<{ id: string; paid: number }>(() => admin
+      .from("payroll_lines").select("id,paid").eq("batch_id", data.id));
+    assertUnpaidPayrollDeletion({ status: batch.status, paid_at: batch.paid_at, lines });
+    // One transaction rechecks and locks payment state, deletes children before parent,
+    // and rolls everything back if any lifecycle guard rejects deletion.
+    const { data: deleted, error } = await admin.rpc("delete_unpaid_payroll_batch", {
+      target_batch_id: data.id,
+    });
+    if (error?.code === "PGRST202" || error?.code === "42883") {
+      throw new Error("Safe payroll deletion is not installed in the external payroll database. Apply the unpaid-batch deletion repair, then retry. No records were deleted.");
+    }
     if (error) throw new Error(`Could not delete payroll batch: ${error.message}`);
     if (!deleted) throw new Error("The payroll batch was not found or was already deleted.");
-    return { type: data.type, id: data.id };
+    return { type: data.type, id: data.id, lineIds: lines.map((line) => line.id) };
   });

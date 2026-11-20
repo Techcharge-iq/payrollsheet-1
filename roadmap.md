@@ -1,4 +1,7 @@
 # Fix roadmap
+- [x] Add confirmed deletion controls for unpaid Legacy and Approved batches in both payroll deletion screens; shared payment protection and atomic server call added. Browser fixture check passed; live deletion blocked by missing external SQL routine.
+- [x] Add fresh server checks for site/month food limits, last-site advances, remaining balance, site-net cap and paid record protection; canonicalize saved month from batch. 67 tests passed, latest build OK.
+- [ ] Verify actual October 2026 save/delete end-to-end and apply external uniqueness/allocation/unpaid-deletion repairs (blocked: no external schema execution connection; managed tools target a different database).
 - [x] Sweep multi-site payroll entry, imports, approval, deductions, allocations, history/export, cache updates and database routines; focused app corrections completed, 55 tests passed and latest build OK. External schema changes and authenticated save remain blocked below.
 - [x] Diagnose repeated employee-month save error and correct misleading “already paid” warning; surface the external database repair required without changing paid records. Targeted error and site-locking tests passed.
 - [ ] Verify the employee/month constraint in the external payroll database and apply a batch-scoped replacement if confirmed (blocked: connected read/migration tools target the unused managed database; external constraint metadata and schema access required).
@@ -46,3 +49,13 @@ Code-reviewed inventory (not live-account verification):
 Remaining verification/implementation blockers:
 - Available migration tools target the unused managed database, not the external payroll database. No external PostgreSQL schema connection or matching connector is available. The external API is reachable but does not expose constraint definitions. Both external SQL repairs remain unapplied, and race-safe same-site enforcement cannot be certified.
 - Preview opened to sign-in; external-app authenticated save, approval, PDF export and finalization/ledger updates were not exercised. No payroll or attendance records were posted or modified.
+
+## October save and marked-batch deletion follow-up
+
+- Actual external API reads confirmed 8 October 2026 batches and 201 lines. Marked T-57 is LEGACY with one line and zero paid; marked Multiple sites is APPROVED with one line and zero paid. One employee already has lines at different sites, but this does not prove the current unique constraint is repaired or that a new save succeeds.
+- Read-before/read-after hashes of the four protected October lines matched. No live rows were saved, deleted, or changed.
+- Both deletion screens use unpaid eligibility; normal deletion now calls the same authorized server function as restricted deletion. Server checks payments then calls an atomic transaction, with no unsafe separate child/parent-delete fallback.
+- Prepared fix-unpaid-payroll-deletion.sql for the external database. It adds service-role-only transaction support after app role validation, rechecks payments under locks, and narrowly extends existing deployed lifecycle functions only for requested unpaid deletion. It does not automatically delete either marked batch, change roles or widen client grants.
+- External API confirmed delete_unpaid_payroll_batch is absent. No SQL repair was executed: available managed migration/data tools are not connected to payroll's external database. SQL syntax/deployed lifecycle compatibility remains unverified.
+- Browser fixture check: Legacy and Approved Delete visible, Paid Delete absent, cancellation unchanged, confirmation invokes only selected fixture ID. This was an isolated component check, not authenticated live deletion.
+- Full unit suite: 67 passed; latest compilation OK. Live multi-site save, atomic deletion, concurrent deduction enforcement, and finalization ledger remain unverified. Existing real deductions were not automatically corrected.

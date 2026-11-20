@@ -72,6 +72,7 @@ import { btnGold, btnIcon, btnOutline, btnPrimary, card, input, inputSm, select 
 import { NewAdvanceValue } from "./NewAdvanceValue";
 import { dbAny } from "@/integrations/supabase/external-client";
 import { fetchAllPages } from "@/lib/paged-query";
+import { canDeleteUnpaidPayroll } from "@/lib/payroll-deletion";
 import {
   effectiveRateForMonth,
   effectiveRateOnDate,
@@ -2294,9 +2295,13 @@ export function PayrollTab({
                   Mark paid
                 </button>
               )}
-              {canDelete && ["DRAFT", "REVIEW"].includes(b.status) && (
+              {canDelete && canDeleteUnpaidPayroll(b) && (
                 <button
-                  onClick={() => onDelete(b.id)}
+                  type="button"
+                  aria-label={`Delete ${b.site || "payroll batch"} ${b.status} batch`}
+                  onClick={() => {
+                    if (window.confirm(`Delete unpaid ${b.status.toLowerCase()} payroll for ${b.site} in ${monthLabel(b.month)}? This permanently removes this batch and its deductions. Paid batches are protected.`)) onDelete(b.id);
+                  }}
                   className={btnOutline + " hover:border-danger hover:text-danger"}
                 >
                   <Trash2 size={14} /> Delete
