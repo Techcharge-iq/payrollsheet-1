@@ -1600,8 +1600,8 @@ export function PayrollTab({
       {locked.size > 0 && (
         <p className="flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/10 px-3 py-2 text-xs font-medium text-slate-700">
           <CheckCircle2 size={14} className="text-gold-dark" />
-          {locked.size} employee(s) already paid in another batch for {monthLabel(month)} — they are
-          blocked here to prevent double payment.
+          {locked.size} employee(s) already included in another batch for this site or an all-sites
+          batch in {monthLabel(month)} — blocked here to prevent duplicate payroll entries.
         </p>
       )}
 

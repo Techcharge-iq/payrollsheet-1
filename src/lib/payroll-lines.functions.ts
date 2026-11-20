@@ -3,6 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { payrollSaveErrorMessage } from "./payroll-save-error";
 
 const PAYROLL_WRITERS = new Set(["admin", "hr", "manager", "foreman"]);
 // Only these roles may record a new advance on a payroll line.
@@ -57,6 +58,6 @@ export const savePayrollLines = createServerFn({ method: "POST" })
       .from("payroll_lines")
       .upsert(rows as never, { onConflict: "id" })
       .select("*");
-    if (error) throw new Error(`Could not save payroll lines: ${error.message}`);
+    if (error) throw new Error(payrollSaveErrorMessage(error));
     return { rows: saved ?? [] };
   });

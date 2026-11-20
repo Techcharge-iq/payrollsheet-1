@@ -1,4 +1,5 @@
 # Fix roadmap
+- [x] Diagnose repeated employee-month save error and correct misleading “already paid” warning; surface the external database repair required without changing paid records. Targeted error and site-locking tests passed.
 - [ ] Verify the employee/month constraint in the external payroll database and apply a batch-scoped replacement if confirmed (blocked: connected read/migration tools target the unused managed database; external constraint metadata and schema access required).
 - [x] Correct Annexure A site selection, attendance source, and export error feedback.
 - [x] Run focused regression checks (11 passed), clear pre-existing duplicated code causing compilation errors, and confirm build OK. Authenticated report/export checks remain unavailable for the external database; mocked browser navigation also did not reach the report.
