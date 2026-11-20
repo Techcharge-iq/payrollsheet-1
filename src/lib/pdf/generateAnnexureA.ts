@@ -63,19 +63,24 @@ export async function fetchAnnexureAData(siteIdOrName: string, month: string): P
     }
 
   // 2. Fetch all employees for name and ID resolution
-  const { data: employeesData, error: employeeError } = await dbAny
-    .from("employees")
-    .select("id, name, id_number, trade");
-  if (employeeError) throw new Error(`Could not load employees: ${employeeError.message}`);
-
+  const pageSize = 1000;
   const empMap = new Map<number, { name: string; civilId: string; trade: string }>();
-  (employeesData ?? []).forEach((e: { id: number; name: string; id_number?: string; trade?: string }) => {
-    empMap.set(Number(e.id), {
-      name: e.name,
-      civilId: e.id_number || String(e.id),
-      trade: e.trade || "HELPER",
+  for (let start = 0; ; start += pageSize) {
+    const { data: employeesData, error: employeeError } = await dbAny
+      .from("employees")
+      .select("id, name, id_number, trade")
+      .order("id", { ascending: true })
+      .range(start, start + pageSize - 1);
+    if (employeeError) throw new Error(`Could not load employees: ${employeeError.message}`);
+    (employeesData ?? []).forEach((e: { id: number; name: string; id_number?: string; trade?: string }) => {
+      empMap.set(Number(e.id), {
+        name: e.name,
+        civilId: e.id_number || String(e.id),
+        trade: e.trade || "HELPER",
+      });
     });
-  });
+    if (!employeesData || employeesData.length < pageSize) break;
+  }
 
   // 3. Try fetching from the attendance table first
   const [year, monthPart] = month.split("-");
@@ -85,12 +90,28 @@ export async function fetchAnnexureAData(siteIdOrName: string, month: string): P
 
   // Timesheets are the application's authoritative attendance source.
   // Match project identity, or an exact normalized name for legacy rows without an ID.
-      const { data: tsData, error: timesheetError } = await dbAny
+  const tsData: Array<{
+    employee_id: number;
+    project_id?: string | null;
+    site: string;
+    total_hours?: number;
+    regular_hours?: number;
+    overtime_hours?: number;
+    status?: string;
+    work_date?: string;
+  }> = [];
+  for (let start = 0; ; start += pageSize) {
+      const { data: page, error: timesheetError } = await dbAny
         .from("timesheets")
         .select("employee_id, project_id, site, total_hours, regular_hours, overtime_hours, status, work_date")
         .gte("work_date", startDate)
-        .lte("work_date", endDate);
+        .lte("work_date", endDate)
+        .order("id", { ascending: true })
+        .range(start, start + pageSize - 1);
       if (timesheetError) throw new Error(`Could not load attendance: ${timesheetError.message}`);
+      tsData.push(...(page ?? []));
+      if (!page || page.length < pageSize) break;
+  }
       const normalize = (name: string) => name.trim().toLowerCase();
       const attendanceRows = (tsData ?? []).filter((ts: { project_id?: string | null; site: string }) =>
         resolvedProjectId && ts.project_id
