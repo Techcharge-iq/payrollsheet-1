@@ -1,6 +1,7 @@
 import * as pdfjs from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { readPayrollImport, type PayrollImportRow } from "./payroll-excel";
+import { readPayrollImport, readRawRows, type PayrollImportRow } from "./payroll-excel";
+import { isMatrixHeader, recordsFromMatrix } from "./attendance-matrix";
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -191,6 +192,8 @@ function employeeForRow(
   return matches[0]!;
 }
 
+// ---------------------------------------------------------------------------
+
 function recordsFromRows(
   rows: PayrollImportRow[],
   employees: AttendanceImportEmployee[],
@@ -290,14 +293,25 @@ export async function readAttendanceImport(
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error("Select a valid attendance month.");
 
   const extension = file.name.split(".").pop()?.toLowerCase();
-  const rows =
-    extension === "pdf"
-      ? await readPdfImport(file)
-      : extension === "xlsx" || extension === "csv"
-        ? await readPayrollImport(file)
-        : null;
-  if (!rows) throw new Error("Choose a text-based .pdf, .xlsx workbook, or .csv file.");
-  return recordsFromRows(rows, employees, month, defaults);
+
+  if (extension === "pdf") {
+    const rows = await readPdfImport(file);
+    return recordsFromRows(rows, employees, month, defaults);
+  }
+
+  if (extension === "xlsx" || extension === "csv") {
+    // Read the raw 2-D grid so we can detect the format before normalising headers.
+    const rawRows = await readRawRows(file);
+    if (rawRows.some(isMatrixHeader)) {
+      // Monthly matrix sheet (Name of staff | 1 | 2 | ... | 31)
+      return recordsFromMatrix(rawRows, employees, month, defaults);
+    }
+    // Standard row-based template (Employee ID | Date | Site | Foreman | ...)
+    const rows = await readPayrollImport(file);
+    return recordsFromRows(rows, employees, month, defaults);
+  }
+
+  throw new Error("Choose a text-based .pdf, .xlsx workbook, or .csv file.");
 }
 
 export function downloadAttendanceImportTemplate() {

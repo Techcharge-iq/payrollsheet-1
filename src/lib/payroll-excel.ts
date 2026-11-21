@@ -177,6 +177,17 @@ export async function readPayrollImport(file: File): Promise<PayrollImportRow[]>
   return rowsToRecords(await parseXlsx(file));
 }
 
+/** Returns the raw 2-D cell grid for a spreadsheet or CSV without header normalization. */
+export async function readRawRows(file: File): Promise<string[][]> {
+  if (file.size > MAX_IMPORT_SIZE) {
+    throw new Error("The file is larger than 10 MB. Please split it into smaller files.");
+  }
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  if (extension === "csv") return parseCsv(await file.text());
+  if (extension === "xlsx") return parseXlsx(file);
+  throw new Error("Choose an .xlsx workbook or a .csv file.");
+}
+
 export function downloadPayrollImportTemplate() {
   const headers = [
     "Database ID",
