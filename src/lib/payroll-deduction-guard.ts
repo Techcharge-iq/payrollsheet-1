@@ -1,6 +1,6 @@
 import { advanceCarryForward, toNum, type AdvanceTx, type PayrollBatch, type PayrollLine } from "./payroll";
 import { lastActiveSite, sameSite, type SiteEntry } from "./multi-site-payroll";
-import { calendarSiteFood, monthlyCalendarFood, type FoodDeployment } from "./food-calendar";
+import type { FoodDeployment } from "./food-calendar";
 import { hasProtectedPayrollPayment } from "./payroll-deletion";
 
 export interface GuardedPayrollRow {
@@ -20,8 +20,8 @@ export function assertPayrollDeductionLimits(
   batches: PayrollBatch[],
   advances: AdvanceTx[],
   entries: Array<SiteEntry & { employee_id: number }>,
-  foodDefaults: ReadonlyMap<number, number>,
-  deployments: FoodDeployment[] = [],
+  _foodDefaults: ReadonlyMap<number, number>,
+  _deployments: FoodDeployment[] = [],
 ): void {
   const replacedIds = new Set(rows.flatMap((row) => row.id ? [row.id] : []));
   const reserved = batches.map((batch) => ({ ...batch, lines: batch.lines.filter((line) => !line.id || !replacedIds.has(line.id)) }));
@@ -31,17 +31,10 @@ export function assertPayrollDeductionLimits(
     if (hasProtectedPayrollPayment(batch)) throw new Error("Paid payroll records cannot be changed by this save.");
     const amounts = [row.food_deduction, row.prev_advance, row.new_advance, row.gross_pay, row.other_deduction];
     if (amounts.some((amount) => !Number.isFinite(amount) || amount < 0)) throw new Error("Payroll deductions and earnings must be valid non-negative amounts.");
-    const foodSetting = foodDefaults.get(row.employee_id) ?? 0;
-    const monthlyFood = monthlyCalendarFood(batch.month, foodSetting);
     const monthEntries = entries.filter((entry) => entry.employee_id === row.employee_id && entry.work_date.startsWith(`${batch.month}-`));
     const allSites = ["", "multiple sites", "all sites"].includes(batch.site.trim().toLowerCase());
-    const siteFood = calendarSiteFood(batch.month, batch.site, monthEntries, deployments.filter((entry) => entry.employee_id === row.employee_id), foodSetting);
     const otherLines = reserved.filter((item) => item.month === batch.month).flatMap((item) => item.lines).filter((line) => Number(line.employee_id) === row.employee_id);
-    const foodUsed = otherLines.reduce((sum, line) => sum + toNum(line.food_deduction), 0);
-    if (row.food_deduction > siteFood + 0.001 || foodUsed + row.food_deduction > monthlyFood + 0.001) {
-      const allowed = Math.max(0, Math.min(siteFood, monthlyFood - foodUsed));
-      throw new Error(`Employee ${row.employee_id}: food deduction exceeds the site's calendar-day limit or remaining monthly food amount. Maximum for this line: ${allowed.toFixed(3)} OMR; site: ${siteFood} OMR; month: ${monthlyFood} OMR; already deducted: ${foodUsed.toFixed(3)} OMR. Reduce Food to ${allowed.toFixed(3)} OMR or correct the dated site deployment.`);
-    }
+    // Food is suggested at 1 OMR/day during generation, but the entered amount is always accepted (user may deduct more).
     const latestSite = lastActiveSite(monthEntries);
     if (row.prev_advance > 0 && latestSite && !allSites && !sameSite(latestSite, batch.site)) {
       throw new Error(`Employee ${row.employee_id}: recover personal advances only in the last active site's payroll batch.`);

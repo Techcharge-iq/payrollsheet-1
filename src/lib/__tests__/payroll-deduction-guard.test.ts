@@ -13,8 +13,8 @@ describe("October multi-site save deduction guard", () => {
   it("allows prorated food and one advance deduction at T-59", () => {
     expect(() => assertPayrollDeductionLimits([row], batches, advances, entries, defaults)).not.toThrow();
   });
-  it("rejects full food repeated at the second site", () => {
-    expect(() => assertPayrollDeductionLimits([{ ...row, food_deduction: 30 }], batches, advances, entries, defaults)).toThrow("food deduction exceeds");
+  it("accepts a manually entered food amount above the daily suggestion", () => {
+    expect(() => assertPayrollDeductionLimits([{ ...row, food_deduction: 45, prev_advance: 0 }], batches, advances, entries, defaults)).not.toThrow();
   });
   it("rejects advances at an earlier site", () => {
     expect(() => assertPayrollDeductionLimits([{ ...row, id: "la", batch_id: "a" }], batches, advances, entries, defaults)).toThrow("last active site");

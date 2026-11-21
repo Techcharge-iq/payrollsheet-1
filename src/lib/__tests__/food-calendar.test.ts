@@ -44,15 +44,15 @@ describe("calendar-day food at 1 OMR", () => {
     ];
     expect(() => assertPayrollDeductionLimits([{ batch_id: "a", employee_id: 144, food_deduction: 31, prev_advance: 0, new_advance: 0, gross_pay: 300, other_deduction: 0 }], batches, [], entries, new Map([[144, 30]]))).not.toThrow();
   });
-  it("reserves other site deductions and explains the remaining amount", () => {
+  it("saves employee 144 food above the daily amount when entered manually", () => {
     const batches = [
       { id: "a", month: "2026-10", site: "A", status: "PAID", lines: [{ employee_id: 144, food_deduction: 15, paid: 100 }] },
       { id: "b", month: "2026-10", site: "B", status: "DRAFT", lines: [] },
     ] as unknown as PayrollBatch[];
     const before = JSON.stringify(batches);
     const row = { batch_id: "b", employee_id: 144, food_deduction: 17, prev_advance: 0, new_advance: 0, gross_pay: 300, other_deduction: 0 };
-    expect(() => assertPayrollDeductionLimits([row], batches, [], [], new Map([[144, 30]]))).toThrow("Maximum for this line: 16.000 OMR");
-    expect(() => assertPayrollDeductionLimits([{ ...row, food_deduction: 16 }], batches, [], [], new Map([[144, 30]]))).not.toThrow();
+    expect(() => assertPayrollDeductionLimits([row], batches, [], [], new Map([[144, 30]]))).not.toThrow();
+    expect(() => assertPayrollDeductionLimits([{ ...row, food_deduction: 45 }], batches, [], [], new Map([[144, 30]]))).not.toThrow();
     expect(JSON.stringify(batches)).toBe(before);
   });
 });
