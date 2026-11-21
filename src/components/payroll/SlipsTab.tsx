@@ -23,7 +23,7 @@ import {
   type Employee,
   type PayrollBatch,
 } from "@/lib/payroll";
-import { downloadSlips, type SlipInput } from "@/lib/slip-pdf";
+import { consolidateSlips, downloadSlips, type SlipInput } from "@/lib/slip-pdf";
 import { SalarySlipModal } from "./SalarySlipPDF";
 import { btnGold, btnOutline, card, input, select } from "./ui";
 
@@ -299,15 +299,31 @@ export function SlipsTab({ employees, batches, advances, notify }: Props) {
                       <td className="px-2 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"
-                          onClick={() =>
-                            setPreviewSlip({
-                              employee,
-                              month,
-                              row,
-                              carriedForward: advanceCarryForward(employee.id, month, batches, advances),
-                              outstandingAdvance: advanceOutstanding(employee.id, batches, advances),
-                            })
-                          }
+                          onClick={() => {
+                            const empRows = rows
+                              .filter((r) => r.employee.id === employee.id)
+                              .map((r) => r.row);
+                            const [consolidated] = consolidateSlips([
+                              {
+                                employee,
+                                month,
+                                row,
+                                rows: empRows,
+                                carriedForward: advanceCarryForward(
+                                  employee.id,
+                                  month,
+                                  batches,
+                                  advances,
+                                ),
+                                outstandingAdvance: advanceOutstanding(
+                                  employee.id,
+                                  batches,
+                                  advances,
+                                ),
+                              },
+                            ]);
+                            setPreviewSlip(consolidated ?? null);
+                          }}
                           className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:border-gold hover:text-gold-dark hover:bg-gold/10 transition"
                           title="Preview salary slip & QR matrix"
                         >

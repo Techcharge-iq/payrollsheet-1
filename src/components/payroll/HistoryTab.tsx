@@ -200,6 +200,7 @@ export function HistoryTab({ employees, batches, advances }: Props) {
                                   employee,
                                   month: r.month,
                                   row: r,
+                                  rows: rows.filter((item) => item.month === r.month),
                                   carriedForward: advanceCarryForward(
                                     employee.id,
                                     r.month,
