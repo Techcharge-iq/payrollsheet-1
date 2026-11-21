@@ -1,3 +1,5 @@
+import type { PayrollAttendanceSnapshotEntry } from "./payroll-attendance-refresh";
+
 export type EmployeeStatus = "Active" | "Holiday" | "Cancelled";
 
 export interface Employee {
@@ -54,6 +56,7 @@ export interface PayrollBatch {
   id: string;
   month: string;
   site: string;
+  attendance_snapshot?: PayrollAttendanceSnapshotEntry[] | null;
   project_id?: string | null;
   foreman_user_id?: string | null;
   foreman: string;
@@ -329,8 +332,12 @@ export function employeeRows(batches: PayrollBatch[], employeeId?: number | stri
 }
 
 export function payrollEmployeeCount(batches: PayrollBatch[]): number {
-  return new Set(batches.flatMap((batch) => batch.lines)
-    .filter((line) => line.employee_id !== "").map((line) => String(line.employee_id))).size;
+  return new Set(
+    batches
+      .flatMap((batch) => batch.lines)
+      .filter((line) => line.employee_id !== "")
+      .map((line) => String(line.employee_id)),
+  ).size;
 }
 
 export function payrollMonthCount(rows: Pick<HistoryRow, "month">[]): number {
@@ -364,7 +371,8 @@ export function lockedEmployeeIds(
 ) {
   // Site-aware: a transferred employee may have one line per site in the same month.
   const norm = (v?: string | null) => (v ?? "").trim().toLowerCase();
-  const isAll = (v?: string | null) => !norm(v) || norm(v) === "multiple sites" || norm(v) === "all sites";
+  const isAll = (v?: string | null) =>
+    !norm(v) || norm(v) === "multiple sites" || norm(v) === "all sites";
   const set = new Set<string>();
   batches
     .filter(

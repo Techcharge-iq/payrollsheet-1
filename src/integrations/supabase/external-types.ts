@@ -70,6 +70,7 @@ export type Database = {
       };
       payroll_batches: {
         Row: {
+          attendance_snapshot: Json | null;
           approved_at: string | null;
           approved_by: string | null;
           created_at: string;
@@ -86,6 +87,7 @@ export type Database = {
           status: "LEGACY" | "DRAFT" | "REVIEW" | "APPROVED" | "LOCKED" | "PAID";
         };
         Insert: {
+          attendance_snapshot?: Json | null;
           approved_at?: string | null;
           approved_by?: string | null;
           created_at?: string;
@@ -102,6 +104,7 @@ export type Database = {
           status?: "LEGACY" | "DRAFT" | "REVIEW" | "APPROVED" | "LOCKED" | "PAID";
         };
         Update: {
+          attendance_snapshot?: Json | null;
           approved_at?: string | null;
           approved_by?: string | null;
           created_at?: string;
