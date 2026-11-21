@@ -1479,6 +1479,29 @@ test("busy-month attendance, site roster, payroll preview and Annexure include r
   expect(pdf).not.toContain("(Worker 1)");
 });
 
+test("daily food preview includes absent and weekoff days at the deployed site", async ({ page }, testInfo) => {
+  const backend = await mockPayrollBackend(page, "admin");
+  const employee = backend.state.employees[0];
+  if (!employee) throw new Error("Missing test employee");
+  employee["default_food_deduction"] = 30;
+  const month = new Date().toISOString().slice(0, 7);
+  backend.state.employee_site_assignments.push({ id: randomUUID(), employee_id: 1, site: "North Campus", effective_from: `${month}-01`, effective_to: null });
+  for (const [day, status, hours] of [["05", "PRESENT", 8], ["06", "ABSENT", 0], ["07", "WEEK_OFF", 0]] as const) {
+    backend.state.timesheets.push({ id: randomUUID(), employee_id: 1, site: "North Campus", project_id: northCampusId, foreman: "Samir Foreman", foreman_user_id: foremanUserId, work_date: `${month}-${day}`, status, regular_hours: hours, overtime_hours: 0 });
+  }
+  await page.setViewportSize({ width: 1280, height: 1800 });
+  await page.goto("/");
+  await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
+  await openTab(page, "Monthly Payroll", false);
+  await page.getByLabel("Site for payroll generation").selectOption("North Campus");
+  await page.getByRole("button", { name: "Preview Payroll", exact: true }).click();
+  const row = page.getByRole("row", { name: /Asha KhanE-001/ });
+  await expect(row).toBeVisible();
+  const monthlyFood = new Date(new Date().getUTCFullYear(), new Date().getUTCMonth() + 1, 0).getDate();
+  await expect(row.getByRole("cell", { name: `${monthlyFood}.00`, exact: true })).toBeVisible();
+  await row.screenshot({ path: testInfo.outputPath("calendar-food-preview.png") });
+});
+
 test("HR can prepare payroll but does not get approval or deletion controls", async ({ page }) => {
   const backend = await mockPayrollBackend(page, "hr");
   const month = new Date().toISOString().slice(0, 7);

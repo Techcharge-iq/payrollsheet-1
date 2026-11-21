@@ -7,6 +7,7 @@ import { payrollSaveErrorMessage } from "./payroll-save-error";
 import { fetchAllPages } from "./paged-query";
 import { assertNoDuplicateSitePayroll, type PayrollScopeBatch, type PayrollScopeLine } from "./payroll-site-duplicates";
 import { assertPayrollDeductionLimits } from "./payroll-deduction-guard";
+import type { FoodDeployment } from "./food-calendar";
 import { nextPayrollMonth, type AdvanceTx, type PayrollBatch, type PayrollLine } from "./payroll";
 
 const PAYROLL_WRITERS = new Set(["admin", "hr", "manager", "foreman"]);
@@ -79,13 +80,14 @@ export const savePayrollLines = createServerFn({ method: "POST" })
       new_advance: canIssueAdvance ? row.new_advance : row.id ? (stored.get(row.id) ?? 0) : 0,
     }));
 
-    const [historyBatches, historyLines, advances, attendance, employees, settings] = await Promise.all([
+    const [historyBatches, historyLines, advances, attendance, employees, settings, deployments] = await Promise.all([
       fetchAllPages<any>(() => admin.from("payroll_batches").select("id,month,site,status,paid_at,foreman")),
       fetchAllPages<any>(() => admin.from("payroll_lines").select("*")),
       fetchAllPages<AdvanceTx>(() => admin.from("advance_transactions").select("*")),
       fetchAllPages<any>(() => admin.from("timesheets").select("id,employee_id,work_date,site,status").gte("work_date", `${[...months].sort()[0]}-01`).lt("work_date", `${nextPayrollMonth([...months].sort().at(-1) ?? "")}-01`)),
       fetchAllPages<any>(() => admin.from("employees").select("id,default_food_deduction")),
       admin.from("payroll_settings").select("default_food_deduction").eq("singleton", true).maybeSingle(),
+      fetchAllPages<FoodDeployment>(() => admin.from("employee_site_assignments").select("id,employee_id,site,effective_from,effective_to")),
     ]);
     if (settings.error) throw new Error("Could not verify monthly food deduction settings.");
     const history: PayrollBatch[] = historyBatches.map((batch: any) => ({ ...batch, lines: historyLines.filter((line: any) => line.batch_id === batch.id) as PayrollLine[] }));
@@ -99,7 +101,7 @@ export const savePayrollLines = createServerFn({ method: "POST" })
       gross_pay: row.gross_pay,
       other_deduction: row.other_deduction,
       ...(row.id ? { id: row.id } : {}),
-    })), history, advances, attendance, foodDefaults);
+    })), history, advances, attendance, foodDefaults, deployments);
 
     const { data: saved, error } = await admin
       .from("payroll_lines")

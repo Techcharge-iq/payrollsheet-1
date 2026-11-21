@@ -1,12 +1,10 @@
 import {
   lastActiveSite,
-  proratedFood,
   siteAdvanceDeduction,
-  siteDayShare,
   sameSite,
-  priorMonthlyFood,
   remainingAdvanceForBatch,
 } from "@/lib/multi-site-payroll";
+import { calendarSiteFood, monthlyCalendarFood, type FoodDeployment } from "@/lib/food-calendar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
@@ -501,9 +499,6 @@ export function PayrollTab({
   notify,
   onNewEmployee,
   defaultFoodDeduction,
-  savingFoodDeductionDefault,
-  onDefaultFoodDeductionChange,
-  canManageFoodDeductionDefault,
 }: Props) {
   const [month, setMonth] = useState(currentPayrollMonth);
   const [generationSite, setGenerationSite] = useState("");
@@ -517,6 +512,12 @@ export function PayrollTab({
     /payroll_settings|does not exist|not found/i.test(error.message ?? "");
 
   const timesheetsQuery = useTimesheetsForMonth(month);
+  const foodDeploymentsQuery = useQuery({
+    queryKey: ["employee_site_assignments", "payroll-food", month],
+    queryFn: () => fetchAllPages<FoodDeployment>(() => dbAny.from("employee_site_assignments")
+      .select("id,employee_id,site,effective_from,effective_to")),
+  });
+  const foodDeployments = foodDeploymentsQuery.data ?? [];
   const projectsQuery = useProjects(true);
   const foremenQuery = useActiveForemen();
   const projects = useMemo(() => projectsQuery.data ?? [], [projectsQuery.data]);
@@ -588,12 +589,8 @@ export function PayrollTab({
   const [isImporting, setIsImporting] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const [foodDeductionDefaultDraft, setFoodDeductionDefaultDraft] = useState(defaultFoodDeduction);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
-    setFoodDeductionDefaultDraft(defaultFoodDeduction);
-  }, [defaultFoodDeduction]);
 
   const monthOptions = useMemo(
     () =>
@@ -649,7 +646,7 @@ export function PayrollTab({
   const foodDeductionForEmployee = (employeeId: number) => {
     const employee = employees.find((item) => item.id === employeeId);
     // Zero is an explicit opt-out in the employee form, not an unset default.
-    return priorMonthlyFood(batches, employeeId, month, toNum(employee?.default_food_deduction ?? defaultFoodDeduction));
+    return monthlyCalendarFood(month, toNum(employee?.default_food_deduction ?? defaultFoodDeduction));
   };
 
   const foremen = useMemo(() => {
@@ -693,17 +690,17 @@ export function PayrollTab({
     lines: PayrollLine[];
   } | null>(null);
   const generateFromTimesheets = (previewOnly = false) => {
-    if (batchesQuery.error || advanceBalancesQuery.error || salaryHistoryQuery.error) {
+    if (batchesQuery.error || advanceBalancesQuery.error || salaryHistoryQuery.error || foodDeploymentsQuery.error) {
       notify(
         `Could not load payroll safeguards: ${
-          (batchesQuery.error ?? advanceBalancesQuery.error ?? salaryHistoryQuery.error)?.message ??
+          (batchesQuery.error ?? advanceBalancesQuery.error ?? salaryHistoryQuery.error ?? foodDeploymentsQuery.error)?.message ??
           "Unknown error"
         }`,
         "warn",
       );
       return;
     }
-    if (batchesQuery.isLoading || advanceBalancesQuery.isLoading || salaryHistoryQuery.isLoading) {
+    if (batchesQuery.isLoading || advanceBalancesQuery.isLoading || salaryHistoryQuery.isLoading || foodDeploymentsQuery.isPending) {
       notify("Payroll safeguards are still loading. Try again in a moment.", "warn");
       return;
     }
@@ -801,11 +798,10 @@ export function PayrollTab({
       if (total.overtimeHours > 0 && payrollPolicy.overtimeMultiplier === null) {
         return;
       }
-      // Option A: prorate food by site days; recover advances only at the last active site.
+      // Calendar-day food includes absent/weekoff days; advances still follow last active site.
       const employeeMonthEntries = timesheets.filter(
         (entry) => entry.employee_id === employeeId && entry.work_date.startsWith(`${month}-`),
       );
-      const share = siteDayShare(employeeMonthEntries, generationSite);
       const foodAlreadyThisMonth = monthBatches
         .filter((batch) => batch.id !== draft?.id)
         .flatMap((batch) => batch.lines)
@@ -815,7 +811,8 @@ export function PayrollTab({
       // Never deduct more food across all site batches than the monthly amount.
       const foodDeduction = Math.max(
         0,
-        Math.min(proratedFood(monthlyFood, share), monthlyFood - foodAlreadyThisMonth),
+        Math.min(calendarSiteFood(month, generationSite, employeeMonthEntries,
+          foodDeployments.filter((entry) => entry.employee_id === employeeId), monthlyFood), monthlyFood - foodAlreadyThisMonth),
       );
       const isLastSite =
         !generationSite || sameSite(lastActiveSite(employeeMonthEntries), generationSite);
@@ -1207,6 +1204,14 @@ export function PayrollTab({
       foreman_user_id: null,
       foreman: "",
       rate: emp ? (effectiveRateForMonth(emp.id, month, salaryHistory) ?? emp.hourly_rate) : "",
+      food_deduction: emp && draft ? Math.max(0, Math.min(
+        calendarSiteFood(month, draft.site, timesheets.filter((entry) => entry.employee_id === emp.id),
+          foodDeployments.filter((entry) => entry.employee_id === emp.id),
+          toNum(emp.default_food_deduction ?? defaultFoodDeduction)),
+        foodDeductionForEmployee(emp.id) - monthBatches.filter((batch) => batch.id !== draft.id)
+          .flatMap((batch) => batch.lines).filter((line) => Number(line.employee_id) === emp.id)
+          .reduce((sum, line) => sum + toNum(line.food_deduction), 0),
+      )) : "",
       prev_advance: "",
     });
   };
@@ -1270,7 +1275,7 @@ export function PayrollTab({
           new_advance: toNum(line.new_advance),
           gross_pay: lineGross(line),
           other_deduction: toNum(line.other_deduction),
-        })), batches, advances, timesheets, new Map(employees.map((employee) => [employee.id, toNum(employee.default_food_deduction ?? defaultFoodDeduction)])));
+        })), batches, advances, timesheets, new Map(employees.map((employee) => [employee.id, toNum(employee.default_food_deduction ?? defaultFoodDeduction)])), foodDeployments);
       } catch (error) {
         notify(error instanceof Error ? error.message : "Could not reconcile payroll deductions.", "warn");
         return;
@@ -1411,39 +1416,13 @@ export function PayrollTab({
             ))}
           </select>
         </div>
-        {canManageFoodDeductionDefault && (
-          <label className="min-w-40 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Default food deduction
-            <input
-              aria-label="Default food deduction"
-              type="number"
-              min="0"
-              step="0.001"
-              value={foodDeductionDefaultDraft}
-              disabled={savingFoodDeductionDefault}
-              onChange={(event) => setFoodDeductionDefaultDraft(Number(event.target.value) || 0)}
-              className={`${input} mt-1`}
-            />
-            <button
-              type="button"
-              disabled={
-                savingFoodDeductionDefault || foodDeductionDefaultDraft === defaultFoodDeduction
-              }
-              onClick={() => void onDefaultFoodDeductionChange(foodDeductionDefaultDraft)}
-              className={`${btnOutline} mt-2 w-full`}
-            >
-              {savingFoodDeductionDefault ? (
-                <LoaderCircle size={14} className="animate-spin" />
-              ) : (
-                <Save size={14} />
-              )}
-              {savingFoodDeductionDefault ? "Saving…" : "Save default"}
-            </button>
-          </label>
-        )}
+        <div className="text-xs text-muted-foreground">
+          <span className="font-semibold">Food: 1 OMR / calendar day</span>
+          <span className="ml-2">{monthlyCalendarFood(month, 1)} OMR / month</span>
+        </div>
         <button
           onClick={() => generateFromTimesheets(true)}
-          disabled={timesheetsLoading || Boolean(timesheetsError)}
+          disabled={timesheetsLoading || Boolean(timesheetsError) || foodDeploymentsQuery.isPending || foodDeploymentsQuery.isError}
           className={btnOutline}
         >
           <Clock3 size={15} /> Preview Payroll
@@ -1577,7 +1556,7 @@ export function PayrollTab({
         )}
         <button
           onClick={() => generateFromTimesheets()}
-          disabled={timesheetsLoading || Boolean(timesheetsError)}
+          disabled={timesheetsLoading || Boolean(timesheetsError) || foodDeploymentsQuery.isPending || foodDeploymentsQuery.isError}
           className={btnOutline}
         >
           <Clock3 size={15} />{" "}

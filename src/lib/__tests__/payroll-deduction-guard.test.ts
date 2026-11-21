@@ -5,7 +5,7 @@ const batches = [
   { id: "a", site: "Adam", month: "2026-10", status: "DRAFT", lines: [{ id: "la", employee_id: 7, food_deduction: 15, prev_advance: 0, new_advance: 0, paid: 0 }] },
   { id: "b", site: "T-59", month: "2026-10", status: "DRAFT", lines: [] },
 ] as unknown as PayrollBatch[];
-const entries = [{ employee_id: 7, site: "Adam", work_date: "2026-10-10", status: "PRESENT" }, { employee_id: 7, site: "T-59", work_date: "2026-10-20", status: "PRESENT" }];
+const entries = [{ employee_id: 7, site: "Adam", work_date: "2026-10-01", status: "PRESENT" }, { employee_id: 7, site: "T-59", work_date: "2026-10-16", status: "PRESENT" }];
 const advances = [{ employee_id: 7, date: "2026-09-01", amount: 100 }] as AdvanceTx[];
 const defaults = new Map([[7, 30]]);
 const row: GuardedPayrollRow = { batch_id: "b", employee_id: 7, food_deduction: 15, prev_advance: 100, new_advance: 0, gross_pay: 200, other_deduction: 0 };

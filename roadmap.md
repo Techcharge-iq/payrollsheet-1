@@ -1,4 +1,5 @@
 # Fix roadmap
+- [x] Align food generation/manual selection and server save/approval limits with calendar-day charges and dated site deployments; 81 unit tests passed, including absence/weekoff, transfers, Employee 144 and paid-history preservation. Build OK. Live payroll save remains unverified: external authenticated access is unavailable; isolated browser check stopped at secure-access gate.
 - [x] Sweep remaining edit, approval, payment, deletion and cache paths for paid-record protection and duplicate deductions; fix future behavior and record external database blockers. 71 unit tests and isolated Delete-control browser checks passed.
 - [x] Add confirmed deletion controls for unpaid Legacy and Approved batches in both payroll deletion screens; shared payment protection and atomic server call added. Browser fixture check passed; live deletion blocked by missing external SQL routine.
 - [x] Add fresh server checks for site/month food limits, last-site advances, remaining balance, site-net cap and paid record protection; canonicalize saved month from batch. 67 tests passed, latest build OK.
