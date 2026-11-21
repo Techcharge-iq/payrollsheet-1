@@ -23,6 +23,7 @@ import {
 import { downloadAttendanceReport } from "@/lib/attendance-report-pdf";
 import type { TablesInsert } from "@/integrations/supabase/external-types";
 import { useProjects } from "@/lib/management-data";
+import { printAttendanceMatrix } from "@/lib/attendance-print";
 import { exportAnnexureAPDF } from "@/lib/pdf/generateAnnexureA";
 import { btnGold, btnOutline, card, select } from "./ui";
 import { Button } from "@/components/ui/button";
@@ -253,6 +254,7 @@ function AttendanceCell({
       <TooltipTrigger asChild>
         <span
           tabIndex={0}
+          data-cell={label || "-"}
           aria-label={`${dateLabel}: ${label || "no attendance recorded"}`}
           className={`inline-flex min-h-8 min-w-10 items-center justify-center rounded-sm px-1 text-xs ${cellStyle}`}
         >
@@ -512,7 +514,7 @@ export function AttendanceReportTab({ employees }: Props) {
         </div>
         <button
           type="button"
-          onClick={() => window.print()}
+          onClick={printAttendanceMatrix}
           className={`no-print ml-auto ${btnOutline}`}
         >
           <Printer size={16} />
@@ -573,7 +575,7 @@ export function AttendanceReportTab({ employees }: Props) {
           </Button>
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={printAttendanceMatrix}
             className={btnOutline}
           >
             <Printer size={16} />

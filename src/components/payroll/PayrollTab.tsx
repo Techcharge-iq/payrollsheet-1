@@ -4,7 +4,7 @@ import {
   sameSite,
   remainingAdvanceForBatch,
 } from "@/lib/multi-site-payroll";
-import { calendarSiteFood, monthlyCalendarFood, type FoodDeployment } from "@/lib/food-calendar";
+import { calendarSiteFood, calendarSiteFoodDays, monthlyCalendarFood, type FoodDeployment } from "@/lib/food-calendar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
@@ -522,6 +522,26 @@ export function PayrollTab({
   const foremenQuery = useActiveForemen();
   const projects = useMemo(() => projectsQuery.data ?? [], [projectsQuery.data]);
   const timesheets = useMemo(() => timesheetsQuery.data ?? [], [timesheetsQuery.data]);
+  const foodBreakdown = (line: PayrollLine) => {
+    const id = Number(line.employee_id);
+    if (!id || !draft) return null;
+    const emp = employees.find((e) => e.id === id);
+    let days: string[] = [];
+    try {
+      days = calendarSiteFoodDays(month, draft.site, timesheets.filter((e) => e.employee_id === id),
+        foodDeployments.filter((e) => e.employee_id === id),
+        toNum(emp?.default_food_deduction ?? defaultFoodDeduction));
+    } catch { return null; }
+    const nums = days.map((d) => Number(d.slice(-2)));
+    const ranges: string[] = [];
+    for (let i = 0; i < nums.length; i++) {
+      let j = i;
+      while (j + 1 < nums.length && nums[j + 1] === (nums[j] ?? 0) + 1) j++;
+      ranges.push(i === j ? `${nums[i]}` : `${nums[i]}–${nums[j]}`);
+      i = j;
+    }
+    return { count: days.length, ranges: ranges.join(", ") || "none", amount: days.length };
+  };
   const timesheetsLoading = timesheetsQuery.isLoading;
   const timesheetsError =
     timesheetsQuery.error instanceof Error ? timesheetsQuery.error.message : "";
@@ -1873,6 +1893,10 @@ export function PayrollTab({
                                 onChange={(e) => setLine(idx, { [f]: e.target.value })}
                                 className={`${inputSm} w-20 text-right ${f === "new_advance" && toNum(l.new_advance) > 0 ? "border-gold bg-gold/10 font-extrabold text-warn" : ""}`}
                               />
+                              {f === "food_deduction" && (() => { const b = foodBreakdown(l); return b ? (
+                                <p className="mt-0.5 w-20 text-[10px] leading-tight text-muted-foreground" title={`Days ${b.ranges}`}>
+                                  {b.count} days = {fmt(b.amount)}
+                                </p>) : null; })()}
                             </td>
                           ))}
                           <td className="px-2 py-2 text-right font-bold text-money">
@@ -2008,6 +2032,10 @@ export function PayrollTab({
                             onChange={(e) => setLine(idx, { [f]: e.target.value })}
                             className={`${inputSm} text-right ${f === "new_advance" && toNum(l.new_advance) > 0 ? "border-gold bg-gold/10 font-extrabold text-warn" : ""}`}
                           />
+                          {f === "food_deduction" && (() => { const b = foodBreakdown(l); return b ? (
+                            <span className="mt-0.5 block text-[10px] leading-tight text-muted-foreground">
+                              Days {b.ranges} · {b.count} × 1 = {fmt(b.amount)} OMR
+                            </span>) : null; })()}
                         </label>
                       ))}
                       <div className="self-end rounded-md bg-navy-soft px-3 py-2 text-right">

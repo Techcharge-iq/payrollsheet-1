@@ -17,13 +17,19 @@ export function monthlyCalendarFood(month: string, legacySetting: number): numbe
 
 /** One charge per calendar day, irrespective of attendance status. Deployments take priority. */
 export function calendarSiteFood(month: string, site: string, entries: SiteEntry[], deployments: FoodDeployment[], legacySetting: number): number {
+  return calendarSiteFoodDays(month, site, entries, deployments, legacySetting).length;
+}
+
+/** The calendar dates that count toward the food deduction (1 per date). */
+export function calendarSiteFoodDays(month: string, site: string, entries: SiteEntry[], deployments: FoodDeployment[], legacySetting: number): string[] {
   const monthly = monthlyCalendarFood(month, legacySetting);
-  if (!monthly || ["", "all sites", "multiple sites"].includes(site.trim().toLowerCase())) return monthly;
+  const all = Array.from({ length: monthly }, (_, i) => `${month}-${String(i + 1).padStart(2, "0")}`);
+  if (!monthly || ["", "all sites", "multiple sites"].includes(site.trim().toLowerCase())) return all;
   const dated = entries.filter((entry) => entry.site.trim() && entry.work_date.startsWith(`${month}-`))
     .sort((a, b) => a.work_date.localeCompare(b.work_date) || a.site.localeCompare(b.site));
   // Legacy manual payroll without attendance/deployment is still subject to the monthly cap.
-  if (!dated.length && !deployments.length) return monthly;
-  let days = 0;
+  if (!dated.length && !deployments.length) return all;
+  const days: string[] = [];
   for (let day = 1; day <= monthly; day++) {
     const date = `${month}-${String(day).padStart(2, "0")}`;
     const deployment = deployments.filter((row) => row.effective_from <= date && (!row.effective_to || row.effective_to >= date))
@@ -33,7 +39,7 @@ export function calendarSiteFood(month: string, site: string, entries: SiteEntry
     if (dated.length && !recorded) continue;
     const previous = dated.filter((entry) => entry.work_date <= date).at(-1);
     const assignedSite = deployment?.site ?? recorded?.site ?? previous?.site ?? dated[0]?.site;
-    if (assignedSite && sameSite(assignedSite, site)) days++;
+    if (assignedSite && sameSite(assignedSite, site)) days.push(date);
   }
   return days;
 }
