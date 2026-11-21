@@ -1054,7 +1054,7 @@ export function PayrollTab({
   const beginRefresh = async (batch: PayrollBatch) => {
     if (!batch.attendance_snapshot) {
       notify(
-        "This batch has no attendance snapshot. Refresh requires a batch generated after the attendance snapshot database update.",
+        "This batch was created before attendance tracking. Use Edit to review it, or delete and regenerate it.",
         "warn",
       );
       return;
@@ -1112,6 +1112,30 @@ export function PayrollTab({
         "warn",
       );
     }
+  };
+
+  const refreshAllBatches = async () => {
+    await timesheetsQuery.refetch();
+    await batchesQuery.refetch();
+    const paidIds = new Set(
+      monthBatches.flatMap((item) => item.lines.map((line) => Number(line.employee_id))),
+    );
+    const editable = monthBatches.filter(
+      (b) => ["DRAFT", "REVIEW"].includes(b.status) && !hasProtectedPayrollPayment(b),
+    );
+    const changed = editable.find(
+      (b) =>
+        b.attendance_snapshot &&
+        diffPayrollAttendance(b.attendance_snapshot, monthAttendanceSnapshot, paidIds).length > 0,
+    );
+    if (changed) return beginRefresh(changed);
+    const noSnapshot = editable.filter((b) => !b.attendance_snapshot).length;
+    notify(
+      noSnapshot
+        ? `All batches refreshed. ${noSnapshot} older batch(es) have no saved attendance copy — use Edit to review them, or regenerate.`
+        : "All batches refreshed. No attendance edits found since payroll was generated.",
+      noSnapshot ? "warn" : "ok",
+    );
   };
 
   const applyRefresh = async () => {
@@ -2097,6 +2121,16 @@ export function PayrollTab({
           <Clock3 size={15} />{" "}
           {timesheetsLoading ? "Loading timesheets…" : "Generate Batch from Timesheets"}
         </button>
+        {canDelete && (
+          <button
+            type="button"
+            onClick={() => void refreshAllBatches()}
+            disabled={refreshing || timesheetsLoading}
+            className={btnOutline}
+          >
+            <RefreshCw size={15} className={refreshing ? "animate-spin" : ""} /> Refresh all batches
+          </button>
+        )}
       </div>
       {(timesheetsError || projectsError) && (
         <p
@@ -2831,15 +2865,6 @@ export function PayrollTab({
                 aria-label={`View ${b.site || "payroll batch"} details`}
               >
                 <Eye size={14} /> View
-              </button>
-              <button
-                type="button"
-                onClick={() => void beginRefresh(b)}
-                disabled={!canDelete}
-                className={btnOutline}
-                aria-label={`Refresh payroll for ${b.site || "batch"}`}
-              >
-                <RefreshCw size={14} /> Refresh Payroll
               </button>
               {!hasProtectedPayrollPayment(b) &&
                 (canDelete || ["DRAFT", "REVIEW"].includes(b.status)) && (

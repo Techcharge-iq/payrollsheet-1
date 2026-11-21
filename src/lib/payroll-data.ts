@@ -15,6 +15,25 @@ export type TimesheetRecord = Tables<"timesheets">;
 export type PayrollSiteAllocation = Tables<"payroll_site_allocations">;
 type TimesheetInsert = TablesInsert<"timesheets">;
 
+function readLocalSnapshot(id: string) {
+  try {
+    if (typeof localStorage === "undefined") return null;
+    const value: unknown = JSON.parse(localStorage.getItem(`payroll_snapshot:${id}`) ?? "null");
+    return isPayrollAttendanceSnapshot(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalSnapshot(id: string, snapshot: unknown) {
+  try {
+    if (typeof localStorage !== "undefined")
+      localStorage.setItem(`payroll_snapshot:${id}`, JSON.stringify(snapshot));
+  } catch {
+    /* storage full or unavailable */
+  }
+}
+
 async function assertBatchHasNoPayments(id: string): Promise<void> {
   const { data: batch, error } = await supabase
     .from("payroll_batches")
@@ -345,7 +364,7 @@ export function useBatches(month?: string, enabled = true) {
         site: b.site ?? "",
         attendance_snapshot: isPayrollAttendanceSnapshot(b.attendance_snapshot)
           ? b.attendance_snapshot
-          : null,
+          : readLocalSnapshot(b.id),
         project_id: b.project_id,
         foreman_user_id: b.foreman_user_id,
         foreman: b.foreman ?? "",
@@ -474,9 +493,6 @@ export function useSaveBatch(canDelete = false) {
             project_id: batch.project_id ?? null,
             foreman: batch.foreman,
             foreman_user_id: batch.foreman_user_id ?? null,
-            ...(batch.attendance_snapshot
-              ? { attendance_snapshot: batch.attendance_snapshot }
-              : {}),
           })
           .select("*")
           .single();
@@ -569,8 +585,10 @@ export function useSaveBatch(canDelete = false) {
           .eq("id", batchId)
           .select("*")
           .single();
-        if (error) throw error;
-        await writeCachedRows("payroll_batches", [data]);
+        // Older payroll databases lack this column; keep the snapshot on this device instead.
+        if (error && error.code !== "42703" && !/attendance_snapshot/.test(error.message)) throw error;
+        if (data) await writeCachedRows("payroll_batches", [data]);
+        writeLocalSnapshot(batchId, batch.attendance_snapshot);
       }
       return batchId;
     },
