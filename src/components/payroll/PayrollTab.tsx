@@ -1,10 +1,16 @@
 import {
+  attendanceBelongsToBatch,
   lastActiveSite,
   siteAdvanceDeduction,
   sameSite,
   remainingAdvanceForBatch,
 } from "@/lib/multi-site-payroll";
-import { calendarSiteFood, calendarSiteFoodDays, monthlyCalendarFood, type FoodDeployment } from "@/lib/food-calendar";
+import {
+  calendarSiteFood,
+  calendarSiteFoodDays,
+  monthlyCalendarFood,
+  type FoodDeployment,
+} from "@/lib/food-calendar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
@@ -19,6 +25,7 @@ import {
   LoaderCircle,
   Pencil,
   Plus,
+  RefreshCw,
   Save,
   Search,
   Share2,
@@ -38,6 +45,7 @@ import {
   payrollEmployeeCount,
   monthLabel,
   payrollMonthOptions,
+  nextPayrollMonth,
   PAYROLL_POLICY,
   PAYROLL_CALCULATION_VERSION,
   type PayrollBatchStatus,
@@ -73,6 +81,13 @@ import { fetchAllPages } from "@/lib/paged-query";
 import { canDeleteUnpaidPayroll, hasProtectedPayrollPayment } from "@/lib/payroll-deletion";
 import { assertPayrollDeductionLimits } from "@/lib/payroll-deduction-guard";
 import {
+  applySelectedAttendanceDiffs,
+  attendanceSnapshot,
+  diffPayrollAttendance,
+  type PayrollAttendanceDiff,
+  type PayrollAttendanceSnapshotEntry,
+} from "@/lib/payroll-attendance-refresh";
+import {
   effectiveRateForMonth,
   effectiveRateOnDate,
   normalizeSalaryHistory,
@@ -100,6 +115,12 @@ interface EmployeeSearchProps {
   locked: Set<string>;
   value: number | "";
   onPick: (value: string) => void;
+}
+
+interface RefreshReview {
+  batch: PayrollBatch;
+  current: PayrollAttendanceSnapshotEntry[];
+  diffs: PayrollAttendanceDiff[];
 }
 
 function EmployeeSearchSelect({ employees, locked, value, onPick }: EmployeeSearchProps) {
@@ -514,24 +535,52 @@ export function PayrollTab({
   const timesheetsQuery = useTimesheetsForMonth(month);
   const foodDeploymentsQuery = useQuery({
     queryKey: ["employee_site_assignments", "payroll-food", month],
-    queryFn: () => fetchAllPages<FoodDeployment>(() => dbAny.from("employee_site_assignments")
-      .select("id,employee_id,site,effective_from,effective_to")),
+    queryFn: () =>
+      fetchAllPages<FoodDeployment>(() =>
+        dbAny
+          .from("employee_site_assignments")
+          .select("id,employee_id,site,effective_from,effective_to"),
+      ),
   });
   const foodDeployments = foodDeploymentsQuery.data ?? [];
   const projectsQuery = useProjects(true);
   const foremenQuery = useActiveForemen();
   const projects = useMemo(() => projectsQuery.data ?? [], [projectsQuery.data]);
   const timesheets = useMemo(() => timesheetsQuery.data ?? [], [timesheetsQuery.data]);
+  const monthAttendanceSnapshot = useMemo(
+    () =>
+      attendanceSnapshot(
+        timesheets
+          .filter((entry) => entry.work_date.startsWith(`${month}-`))
+          .map((entry) => ({
+            employee_id: entry.employee_id,
+            work_date: entry.work_date,
+            status: entry.status,
+            regular_hours: Number(entry.regular_hours ?? 0),
+            overtime_hours: Number(entry.overtime_hours ?? 0),
+            site: entry.site,
+            project_id: entry.project_id ?? null,
+            foreman: entry.foreman ?? "",
+          })),
+      ),
+    [month, timesheets],
+  );
   const foodBreakdown = (line: PayrollLine) => {
     const id = Number(line.employee_id);
     if (!id || !draft) return null;
     const emp = employees.find((e) => e.id === id);
     let days: string[] = [];
     try {
-      days = calendarSiteFoodDays(month, draft.site, timesheets.filter((e) => e.employee_id === id),
+      days = calendarSiteFoodDays(
+        month,
+        draft.site,
+        timesheets.filter((e) => e.employee_id === id),
         foodDeployments.filter((e) => e.employee_id === id),
-        toNum(emp?.default_food_deduction ?? defaultFoodDeduction));
-    } catch { return null; }
+        toNum(emp?.default_food_deduction ?? defaultFoodDeduction),
+      );
+    } catch {
+      return null;
+    }
     const nums = days.map((d) => Number(d.slice(-2)));
     const ranges: string[] = [];
     for (let i = 0; i < nums.length; i++) {
@@ -604,13 +653,17 @@ export function PayrollTab({
   );
   const [draft, setDraft] = useState<PayrollBatch | null>(null);
   const [viewingBatch, setViewingBatch] = useState<PayrollBatch | null>(null);
+  const [refreshReview, setRefreshReview] = useState<RefreshReview | null>(null);
+  const [refreshSelection, setRefreshSelection] = useState<Set<string>>(new Set());
+  const [refreshEmployeeFilter, setRefreshEmployeeFilter] = useState("");
+  const [refreshSiteFilter, setRefreshSiteFilter] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
   const [foremanLine, setForemanLine] = useState<number | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [isImporting, setIsImporting] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
 
   const monthOptions = useMemo(
     () =>
@@ -666,7 +719,10 @@ export function PayrollTab({
   const foodDeductionForEmployee = (employeeId: number) => {
     const employee = employees.find((item) => item.id === employeeId);
     // Zero is an explicit opt-out in the employee form, not an unset default.
-    return monthlyCalendarFood(month, toNum(employee?.default_food_deduction ?? defaultFoodDeduction));
+    return monthlyCalendarFood(
+      month,
+      toNum(employee?.default_food_deduction ?? defaultFoodDeduction),
+    );
   };
 
   const foremen = useMemo(() => {
@@ -710,17 +766,31 @@ export function PayrollTab({
     lines: PayrollLine[];
   } | null>(null);
   const generateFromTimesheets = (previewOnly = false) => {
-    if (batchesQuery.error || advanceBalancesQuery.error || salaryHistoryQuery.error || foodDeploymentsQuery.error) {
+    if (
+      batchesQuery.error ||
+      advanceBalancesQuery.error ||
+      salaryHistoryQuery.error ||
+      foodDeploymentsQuery.error
+    ) {
       notify(
         `Could not load payroll safeguards: ${
-          (batchesQuery.error ?? advanceBalancesQuery.error ?? salaryHistoryQuery.error ?? foodDeploymentsQuery.error)?.message ??
-          "Unknown error"
+          (
+            batchesQuery.error ??
+            advanceBalancesQuery.error ??
+            salaryHistoryQuery.error ??
+            foodDeploymentsQuery.error
+          )?.message ?? "Unknown error"
         }`,
         "warn",
       );
       return;
     }
-    if (batchesQuery.isLoading || advanceBalancesQuery.isLoading || salaryHistoryQuery.isLoading || foodDeploymentsQuery.isPending) {
+    if (
+      batchesQuery.isLoading ||
+      advanceBalancesQuery.isLoading ||
+      salaryHistoryQuery.isLoading ||
+      foodDeploymentsQuery.isPending
+    ) {
       notify("Payroll safeguards are still loading. Try again in a moment.", "warn");
       return;
     }
@@ -750,6 +820,7 @@ export function PayrollTab({
       { regularHours: number; overtimeHours: number; foremen: Set<string> }
     >();
     monthlyEntries.forEach((entry) => {
+      if (entry.status !== "PRESENT" && entry.status !== "HALF_DAY") return;
       const total = totals.get(entry.employee_id) ?? {
         regularHours: 0,
         overtimeHours: 0,
@@ -783,6 +854,7 @@ export function PayrollTab({
       monthlyEntries
         .filter((entry) => entry.employee_id === employee.id)
         .forEach((entry) => {
+          if (entry.status !== "PRESENT" && entry.status !== "HALF_DAY") return;
           const regularHours = Number(entry.regular_hours ?? 0) + Number(entry.overtime_hours ?? 0);
           const overtimeHours = 0;
           if (regularHours + overtimeHours <= 0) return;
@@ -831,8 +903,16 @@ export function PayrollTab({
       // Never deduct more food across all site batches than the monthly amount.
       const foodDeduction = Math.max(
         0,
-        Math.min(calendarSiteFood(month, generationSite, employeeMonthEntries,
-          foodDeployments.filter((entry) => entry.employee_id === employeeId), monthlyFood), monthlyFood - foodAlreadyThisMonth),
+        Math.min(
+          calendarSiteFood(
+            month,
+            generationSite,
+            employeeMonthEntries,
+            foodDeployments.filter((entry) => entry.employee_id === employeeId),
+            monthlyFood,
+          ),
+          monthlyFood - foodAlreadyThisMonth,
+        ),
       );
       const isLastSite =
         !generationSite || sameSite(lastActiveSite(employeeMonthEntries), generationSite);
@@ -963,6 +1043,7 @@ export function PayrollTab({
       foreman: "",
       status: "DRAFT",
       lines,
+      attendance_snapshot: monthAttendanceSnapshot,
     });
     notify(
       `${lines.length} employee payroll line(s) generated${generationSite ? ` for ${generationSite}` : ""} for review.${skipped ? ` ${skipped} already included or unavailable employee(s) skipped.` : ""}${missingAttendance ? ` ${missingAttendance} active employee(s) had no recorded attendance and were not added.` : ""}${inactive.length ? ` ${inactive.length} inactive or unconfigured employee(s) need review.` : ""}`,
@@ -970,11 +1051,368 @@ export function PayrollTab({
     );
   };
 
+  const beginRefresh = async (batch: PayrollBatch) => {
+    if (!batch.attendance_snapshot) {
+      notify(
+        "This batch has no attendance snapshot. Refresh requires a batch generated after the attendance snapshot database update.",
+        "warn",
+      );
+      return;
+    }
+    if (
+      !canDelete ||
+      !["DRAFT", "REVIEW"].includes(batch.status) ||
+      hasProtectedPayrollPayment(batch)
+    ) {
+      notify("Only unpaid Draft or Review payroll batches can be refreshed.", "warn");
+      return;
+    }
+    if (
+      batchesQuery.error ||
+      advanceBalancesQuery.error ||
+      payrollSettingsQuery.error ||
+      foodDeploymentsQuery.error
+    ) {
+      notify("Could not load payroll safeguards required to refresh this batch.", "warn");
+      return;
+    }
+    if (
+      batchesQuery.isLoading ||
+      advanceBalancesQuery.isLoading ||
+      payrollSettingsQuery.isLoading ||
+      foodDeploymentsQuery.isPending
+    ) {
+      notify("Payroll safeguards are still loading. Try again in a moment.", "warn");
+      return;
+    }
+    try {
+      const currentRows = await fetchAllPages<PayrollAttendanceSnapshotEntry>(() =>
+        dbAny
+          .from("timesheets")
+          .select(
+            "employee_id,work_date,status,regular_hours,overtime_hours,site,project_id,foreman",
+          )
+          .gte("work_date", `${batch.month}-01`)
+          .lt("work_date", `${nextPayrollMonth(batch.month)}-01`),
+      );
+      const current = attendanceSnapshot(currentRows);
+      const paidEmployeeIds = new Set(
+        monthBatches.flatMap((item) => item.lines.map((line) => Number(line.employee_id))),
+      );
+      const diffs = diffPayrollAttendance(batch.attendance_snapshot, current, paidEmployeeIds);
+      setRefreshReview({ batch, current, diffs });
+      setRefreshSelection(new Set());
+      setRefreshEmployeeFilter("");
+      setRefreshSiteFilter("");
+    } catch (error) {
+      notify(
+        error instanceof Error
+          ? `Could not compare attendance: ${error.message}`
+          : "Could not compare attendance.",
+        "warn",
+      );
+    }
+  };
+
+  const applyRefresh = async () => {
+    if (!refreshReview || !refreshSelection.size) return;
+    const selectedDiffs = refreshReview.diffs.filter((diff) => refreshSelection.has(diff.id));
+    const affectedEmployeeIds = new Set(selectedDiffs.map((diff) => diff.employeeId));
+    const plans: Array<{
+      batch: PayrollBatch;
+      lines: PayrollLine[];
+      snapshot: PayrollAttendanceSnapshotEntry[];
+    }> = [];
+    const plannedBatchIds = new Set<string>();
+
+    try {
+      for (const batch of monthBatches) {
+        if (!batch.attendance_snapshot) continue;
+        const snapshot = applySelectedAttendanceDiffs(
+          batch.attendance_snapshot,
+          refreshReview.current,
+          refreshReview.diffs,
+          refreshSelection,
+        );
+        const relevant = [...affectedEmployeeIds].some((employeeId) => {
+          const hadAttendance = batch.attendance_snapshot!.some(
+            (entry) => entry.employee_id === employeeId && attendanceBelongsToBatch(entry, batch),
+          );
+          const hasAttendance = snapshot.some(
+            (entry) => entry.employee_id === employeeId && attendanceBelongsToBatch(entry, batch),
+          );
+          return (
+            hadAttendance ||
+            hasAttendance ||
+            batch.lines.some((line) => Number(line.employee_id) === employeeId)
+          );
+        });
+        if (!relevant) continue;
+        if (
+          !canDelete ||
+          !["DRAFT", "REVIEW"].includes(batch.status) ||
+          hasProtectedPayrollPayment(batch)
+        ) {
+          throw new Error(
+            `Attendance changes affect ${batch.site} payroll, which must be unpaid and in Draft or Review before it can be refreshed.`,
+          );
+        }
+
+        const lines = [...batch.lines];
+        for (const employeeId of affectedEmployeeIds) {
+          const employee = employees.find((item) => item.id === employeeId);
+          if (!employee || employee.status !== "Active") continue;
+          const index = lines.findIndex((line) => Number(line.employee_id) === employeeId);
+          const oldLine = index >= 0 ? lines[index]! : undefined;
+          const entries = snapshot.filter(
+            (entry) =>
+              entry.employee_id === employeeId &&
+              attendanceBelongsToBatch(entry, batch) &&
+              (entry.status === "PRESENT" || entry.status === "HALF_DAY"),
+          );
+          const rateSegmentsByRate = new Map<number, number>();
+          let missingRateDate: string | null = null;
+          let hours = 0;
+          entries.forEach((entry) => {
+            const entryHours = entry.regular_hours + entry.overtime_hours;
+            if (entryHours <= 0) return;
+            const rate =
+              effectiveRateOnDate(employee.id, entry.work_date, salaryHistory) ??
+              (Number(employee.hourly_rate) || undefined);
+            if (rate === undefined || rate <= 0) {
+              missingRateDate = entry.work_date;
+              return;
+            }
+            hours += entryHours;
+            rateSegmentsByRate.set(rate, (rateSegmentsByRate.get(rate) ?? 0) + entryHours);
+          });
+          if (missingRateDate)
+            throw new Error(`${employee.name} has no recorded rate on ${missingRateDate}.`);
+          if (hours <= 0) {
+            if (index >= 0) lines.splice(index, 1);
+            continue;
+          }
+          const rateSegments = [...rateSegmentsByRate].map(([rate, regularHours]) => ({
+            rate,
+            regularHours,
+            overtimeHours: 0,
+          }));
+          const effectiveRate =
+            rateSegments.reduce((sum, segment) => sum + segment.rate * segment.regularHours, 0) /
+            hours;
+          const foodDeduction = oldLine
+            ? toNum(oldLine.food_deduction)
+            : Math.max(
+                0,
+                Math.min(
+                  calendarSiteFood(
+                    batch.month,
+                    batch.site,
+                    snapshot.filter((entry) => entry.employee_id === employeeId),
+                    foodDeployments.filter((entry) => entry.employee_id === employeeId),
+                    foodDeductionForEmployee(employeeId),
+                  ),
+                  foodDeductionForEmployee(employeeId) -
+                    monthBatches
+                      .filter((item) => item.id !== batch.id)
+                      .flatMap((item) => item.lines)
+                      .filter((line) => Number(line.employee_id) === employeeId)
+                      .reduce((sum, line) => sum + toNum(line.food_deduction), 0),
+                ),
+              );
+          const allowances = toNum(oldLine?.allowances);
+          const otherDeduction = toNum(oldLine?.other_deduction);
+          const gross = calculatePayroll({
+            regularHours: hours,
+            overtimeHours: 0,
+            rate: effectiveRate,
+            rateSegments,
+            allowances,
+            deductions: 0,
+            advanceRecovery: 0,
+            policy: payrollPolicy,
+          }).grossPay;
+          const prevAdvance = oldLine
+            ? toNum(oldLine.prev_advance)
+            : sameSite(
+                  lastActiveSite(snapshot.filter((entry) => entry.employee_id === employeeId)),
+                  batch.site,
+                )
+              ? Math.min(
+                  availableAdvance(employeeId, batch.id),
+                  Math.max(0, gross - foodDeduction - otherDeduction),
+                )
+              : 0;
+          const calculation = calculatePayroll({
+            regularHours: hours,
+            overtimeHours: 0,
+            rate: effectiveRate,
+            rateSegments,
+            allowances,
+            deductions: foodDeduction + otherDeduction,
+            advanceRecovery: toNum(prevAdvance),
+            policy: payrollPolicy,
+          });
+          const foremenForEmployee = new Set(entries.map((entry) => entry.foreman).filter(Boolean));
+          const sitesForEmployee = new Set(
+            entries.map((entry) => entry.site.trim()).filter(Boolean),
+          );
+          const refreshedLine: PayrollLine = {
+            ...(oldLine ?? {}),
+            employee_id: employeeId,
+            foreman:
+              foremenForEmployee.size === 1
+                ? [...foremenForEmployee][0]!
+                : (oldLine?.foreman ?? "Multiple foremen"),
+            foreman_user_id: oldLine?.foreman_user_id ?? null,
+            hours,
+            rate: effectiveRate,
+            rate_segments: rateSegments,
+            food_deduction: foodDeduction,
+            prev_advance: prevAdvance,
+            new_advance: oldLine?.new_advance ?? 0,
+            other_deduction: otherDeduction,
+            net_salary: calculation.netPay,
+            paid: oldLine?.paid ?? 0,
+            calculation_version: PAYROLL_CALCULATION_VERSION,
+            overtime_multiplier: payrollPolicy.overtimeMultiplier,
+            regular_hours: calculation.regularHours,
+            overtime_hours: calculation.overtimeHours,
+            regular_pay: calculation.regularPay,
+            overtime_pay: calculation.overtimePay,
+            allowances: calculation.allowances,
+            gross_pay: calculation.grossPay,
+            deductions: calculation.deductions,
+            advance_recovery: calculation.advanceRecovery,
+            net_pay: calculation.netPay,
+            days_worked: new Set(entries.map((entry) => entry.work_date)).size,
+            site: sitesForEmployee.size === 1 ? [...sitesForEmployee][0]! : "Multiple sites",
+          };
+          if (index >= 0) lines[index] = refreshedLine;
+          else lines.push(refreshedLine);
+        }
+        plans.push({ batch, lines, snapshot });
+        plannedBatchIds.add(batch.id);
+      }
+
+      if (!plans.length)
+        throw new Error("No editable payroll batch matches the selected attendance changes.");
+
+      for (const employeeId of affectedEmployeeIds) {
+        const employeePlans = plans.filter((plan) =>
+          plan.lines.some((line) => Number(line.employee_id) === employeeId),
+        );
+        const effectiveSnapshot =
+          plans.find((plan) => plan.snapshot.some((entry) => entry.employee_id === employeeId))
+            ?.snapshot ?? refreshReview.current;
+        const attendanceForEmployee = effectiveSnapshot.filter(
+          (entry) =>
+            entry.employee_id === employeeId &&
+            (entry.status === "PRESENT" || entry.status === "HALF_DAY"),
+        );
+        const lastSite = lastActiveSite(attendanceForEmployee);
+        const hasCurrentHours = attendanceForEmployee.some(
+          (entry) => entry.regular_hours + entry.overtime_hours > 0,
+        );
+        if (!lastSite || !hasCurrentHours) continue;
+        if (!employeePlans.length) {
+          throw new Error(`Create a ${lastSite} payroll batch before applying this site transfer.`);
+        }
+        const target = employeePlans.find(
+          (plan) =>
+            plan.batch.site.trim().toLowerCase() === lastSite.trim().toLowerCase() ||
+            plan.batch.site.trim().toLowerCase() === "multiple sites" ||
+            plan.batch.site.trim().toLowerCase() === "all sites",
+        );
+        if (!target) {
+          throw new Error(`Create a ${lastSite} payroll batch before applying this site transfer.`);
+        }
+        const line = target.lines.find((item) => Number(item.employee_id) === employeeId);
+        if (!line) continue;
+        const fixedRecovery = monthBatches
+          .filter((batch) => !plannedBatchIds.has(batch.id))
+          .flatMap((batch) => batch.lines)
+          .filter((item) => Number(item.employee_id) === employeeId)
+          .reduce((sum, item) => sum + toNum(item.prev_advance), 0);
+        const remaining = Math.max(0, carryForward(employeeId) - fixedRecovery);
+        const room = Math.max(
+          0,
+          toNum(line.gross_pay) - toNum(line.food_deduction) - toNum(line.other_deduction),
+        );
+        line.prev_advance = Math.min(remaining, room);
+        const calculation = calculatePayroll({
+          regularHours: toNum(line.regular_hours),
+          overtimeHours: toNum(line.overtime_hours),
+          rate: toNum(line.rate),
+          rateSegments: line.rate_segments ?? undefined,
+          allowances: toNum(line.allowances),
+          deductions: toNum(line.food_deduction) + toNum(line.other_deduction),
+          advanceRecovery: toNum(line.prev_advance),
+          policy: {
+            ...payrollPolicy,
+            overtimeMultiplier: line.overtime_multiplier ?? payrollPolicy.overtimeMultiplier,
+          },
+        });
+        Object.assign(line, {
+          net_salary: calculation.netPay,
+          advance_recovery: calculation.advanceRecovery,
+          net_pay: calculation.netPay,
+        });
+        employeePlans.forEach((plan) => {
+          const other = plan.lines.find((item) => Number(item.employee_id) === employeeId);
+          if (other && other !== line) {
+            other.prev_advance = 0;
+            const refreshed = calculatePayroll({
+              regularHours: toNum(other.regular_hours),
+              overtimeHours: toNum(other.overtime_hours),
+              rate: toNum(other.rate),
+              rateSegments: other.rate_segments ?? undefined,
+              allowances: toNum(other.allowances),
+              deductions: toNum(other.food_deduction) + toNum(other.other_deduction),
+              advanceRecovery: 0,
+              policy: {
+                ...payrollPolicy,
+                overtimeMultiplier: other.overtime_multiplier ?? payrollPolicy.overtimeMultiplier,
+              },
+            });
+            Object.assign(other, {
+              net_salary: refreshed.netPay,
+              advance_recovery: 0,
+              net_pay: refreshed.netPay,
+            });
+          }
+        });
+      }
+
+      plans.sort((a, b) => {
+        const removesEmployee = (plan: (typeof plans)[number]) =>
+          [...affectedEmployeeIds].some(
+            (employeeId) =>
+              plan.batch.lines.some((line) => Number(line.employee_id) === employeeId) &&
+              !plan.lines.some((line) => Number(line.employee_id) === employeeId),
+          );
+        return Number(removesEmployee(b)) - Number(removesEmployee(a));
+      });
+      for (const plan of plans) {
+        await onSave({ ...plan.batch, lines: plan.lines, attendance_snapshot: plan.snapshot });
+      }
+      setRefreshReview(null);
+      notify(
+        `Applied ${selectedDiffs.length} attendance change(s) across ${plans.length} payroll batch(es).`,
+      );
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not refresh payroll.", "warn");
+    }
+  };
+
   const startEdit = (batch: PayrollBatch) => {
     setImportErrors([]);
     setSubmitError("");
     if (hasProtectedPayrollPayment(batch)) {
-      notify("Payroll with recorded payments cannot be edited. Paid records are protected.", "warn");
+      notify(
+        "Payroll with recorded payments cannot be edited. Paid records are protected.",
+        "warn",
+      );
       return;
     }
     if (!canDelete && !["DRAFT", "REVIEW"].includes(batch.status)) {
@@ -1224,14 +1662,27 @@ export function PayrollTab({
       foreman_user_id: null,
       foreman: "",
       rate: emp ? (effectiveRateForMonth(emp.id, month, salaryHistory) ?? emp.hourly_rate) : "",
-      food_deduction: emp && draft ? Math.max(0, Math.min(
-        calendarSiteFood(month, draft.site, timesheets.filter((entry) => entry.employee_id === emp.id),
-          foodDeployments.filter((entry) => entry.employee_id === emp.id),
-          toNum(emp.default_food_deduction ?? defaultFoodDeduction)),
-        foodDeductionForEmployee(emp.id) - monthBatches.filter((batch) => batch.id !== draft.id)
-          .flatMap((batch) => batch.lines).filter((line) => Number(line.employee_id) === emp.id)
-          .reduce((sum, line) => sum + toNum(line.food_deduction), 0),
-      )) : "",
+      food_deduction:
+        emp && draft
+          ? Math.max(
+              0,
+              Math.min(
+                calendarSiteFood(
+                  month,
+                  draft.site,
+                  timesheets.filter((entry) => entry.employee_id === emp.id),
+                  foodDeployments.filter((entry) => entry.employee_id === emp.id),
+                  toNum(emp.default_food_deduction ?? defaultFoodDeduction),
+                ),
+                foodDeductionForEmployee(emp.id) -
+                  monthBatches
+                    .filter((batch) => batch.id !== draft.id)
+                    .flatMap((batch) => batch.lines)
+                    .filter((line) => Number(line.employee_id) === emp.id)
+                    .reduce((sum, line) => sum + toNum(line.food_deduction), 0),
+              ),
+            )
+          : "",
       prev_advance: "",
     });
   };
@@ -1266,6 +1717,42 @@ export function PayrollTab({
       )
     : null;
 
+  const refreshSites = refreshReview
+    ? [
+        ...new Set(
+          [
+            ...refreshReview.current.map((entry) => entry.site),
+            ...(refreshReview.batch.attendance_snapshot ?? []).map((entry) => entry.site),
+          ].filter(Boolean),
+        ),
+      ].sort((a, b) => a.localeCompare(b))
+    : [];
+  const visibleRefreshDiffs =
+    refreshReview?.diffs.filter((diff) => {
+      const employee = employees.find((item) => item.id === diff.employeeId);
+      const employeeText = `${employee?.name ?? ""} ${diff.employeeId}`.toLowerCase();
+      if (refreshEmployeeFilter && !employeeText.includes(refreshEmployeeFilter.toLowerCase()))
+        return false;
+      if (!refreshSiteFilter) return true;
+      const sites = [
+        ...refreshReview.batch
+          .attendance_snapshot!.filter(
+            (entry) =>
+              entry.employee_id === diff.employeeId &&
+              (!diff.workDate || entry.work_date === diff.workDate),
+          )
+          .map((entry) => entry.site),
+        ...refreshReview.current
+          .filter(
+            (entry) =>
+              entry.employee_id === diff.employeeId &&
+              (!diff.workDate || entry.work_date === diff.workDate),
+          )
+          .map((entry) => entry.site),
+      ];
+      return sites.some((siteName) => siteName === refreshSiteFilter);
+    }) ?? [];
+
   const save = async () => {
     if (!draft) return;
     if (isImporting || validationErrors.length || importErrors.length) return;
@@ -1281,23 +1768,41 @@ export function PayrollTab({
 
   const changeStatus = async (batch: PayrollBatch, status: PayrollBatchStatus) => {
     if (hasProtectedPayrollPayment(batch)) {
-      notify("Payroll with recorded payments cannot be changed. Paid records are protected.", "warn");
+      notify(
+        "Payroll with recorded payments cannot be changed. Paid records are protected.",
+        "warn",
+      );
       return;
     }
     if (status === "APPROVED" || status === "PAID") {
       try {
-        assertPayrollDeductionLimits(batch.lines.map((line) => ({
-          ...(line.id ? { id: line.id } : {}),
-          batch_id: batch.id,
-          employee_id: Number(line.employee_id),
-          food_deduction: toNum(line.food_deduction),
-          prev_advance: toNum(line.prev_advance),
-          new_advance: toNum(line.new_advance),
-          gross_pay: lineGross(line),
-          other_deduction: toNum(line.other_deduction),
-        })), batches, advances, timesheets, new Map(employees.map((employee) => [employee.id, toNum(employee.default_food_deduction ?? defaultFoodDeduction)])), foodDeployments);
+        assertPayrollDeductionLimits(
+          batch.lines.map((line) => ({
+            ...(line.id ? { id: line.id } : {}),
+            batch_id: batch.id,
+            employee_id: Number(line.employee_id),
+            food_deduction: toNum(line.food_deduction),
+            prev_advance: toNum(line.prev_advance),
+            new_advance: toNum(line.new_advance),
+            gross_pay: lineGross(line),
+            other_deduction: toNum(line.other_deduction),
+          })),
+          batches,
+          advances,
+          timesheets,
+          new Map(
+            employees.map((employee) => [
+              employee.id,
+              toNum(employee.default_food_deduction ?? defaultFoodDeduction),
+            ]),
+          ),
+          foodDeployments,
+        );
       } catch (error) {
-        notify(error instanceof Error ? error.message : "Could not reconcile payroll deductions.", "warn");
+        notify(
+          error instanceof Error ? error.message : "Could not reconcile payroll deductions.",
+          "warn",
+        );
         return;
       }
     }
@@ -1442,7 +1947,12 @@ export function PayrollTab({
         </div>
         <button
           onClick={() => generateFromTimesheets(true)}
-          disabled={timesheetsLoading || Boolean(timesheetsError) || foodDeploymentsQuery.isPending || foodDeploymentsQuery.isError}
+          disabled={
+            timesheetsLoading ||
+            Boolean(timesheetsError) ||
+            foodDeploymentsQuery.isPending ||
+            foodDeploymentsQuery.isError
+          }
           className={btnOutline}
         >
           <Clock3 size={15} /> Preview Payroll
@@ -1576,7 +2086,12 @@ export function PayrollTab({
         )}
         <button
           onClick={() => generateFromTimesheets()}
-          disabled={timesheetsLoading || Boolean(timesheetsError) || foodDeploymentsQuery.isPending || foodDeploymentsQuery.isError}
+          disabled={
+            timesheetsLoading ||
+            Boolean(timesheetsError) ||
+            foodDeploymentsQuery.isPending ||
+            foodDeploymentsQuery.isError
+          }
           className={btnOutline}
         >
           <Clock3 size={15} />{" "}
@@ -1893,10 +2408,18 @@ export function PayrollTab({
                                 onChange={(e) => setLine(idx, { [f]: e.target.value })}
                                 className={`${inputSm} w-20 text-right ${f === "new_advance" && toNum(l.new_advance) > 0 ? "border-gold bg-gold/10 font-extrabold text-warn" : ""}`}
                               />
-                              {f === "food_deduction" && (() => { const b = foodBreakdown(l); return b ? (
-                                <p className="mt-0.5 w-20 text-[10px] leading-tight text-muted-foreground" title={`Days ${b.ranges}`}>
-                                  {b.count} days = {fmt(b.amount)}
-                                </p>) : null; })()}
+                              {f === "food_deduction" &&
+                                (() => {
+                                  const b = foodBreakdown(l);
+                                  return b ? (
+                                    <p
+                                      className="mt-0.5 w-20 text-[10px] leading-tight text-muted-foreground"
+                                      title={`Days ${b.ranges}`}
+                                    >
+                                      {b.count} days = {fmt(b.amount)}
+                                    </p>
+                                  ) : null;
+                                })()}
                             </td>
                           ))}
                           <td className="px-2 py-2 text-right font-bold text-money">
@@ -2032,10 +2555,15 @@ export function PayrollTab({
                             onChange={(e) => setLine(idx, { [f]: e.target.value })}
                             className={`${inputSm} text-right ${f === "new_advance" && toNum(l.new_advance) > 0 ? "border-gold bg-gold/10 font-extrabold text-warn" : ""}`}
                           />
-                          {f === "food_deduction" && (() => { const b = foodBreakdown(l); return b ? (
-                            <span className="mt-0.5 block text-[10px] leading-tight text-muted-foreground">
-                              Days {b.ranges} · {b.count} × 1 = {fmt(b.amount)} OMR
-                            </span>) : null; })()}
+                          {f === "food_deduction" &&
+                            (() => {
+                              const b = foodBreakdown(l);
+                              return b ? (
+                                <span className="mt-0.5 block text-[10px] leading-tight text-muted-foreground">
+                                  Days {b.ranges} · {b.count} × 1 = {fmt(b.amount)} OMR
+                                </span>
+                              ) : null;
+                            })()}
                         </label>
                       ))}
                       <div className="self-end rounded-md bg-navy-soft px-3 py-2 text-right">
@@ -2255,6 +2783,17 @@ export function PayrollTab({
           const paid = b.lines.reduce((s, l) => s + toNum(l.paid), 0);
           const newAdvanceTotal = b.lines.reduce((sum, line) => sum + toNum(line.new_advance), 0);
           const newAdvanceCount = b.lines.filter((line) => toNum(line.new_advance) > 0).length;
+          const attendanceChanges = b.attendance_snapshot
+            ? diffPayrollAttendance(
+                b.attendance_snapshot,
+                monthAttendanceSnapshot,
+                new Set(
+                  monthBatches.flatMap((item) =>
+                    item.lines.map((line) => Number(line.employee_id)),
+                  ),
+                ),
+              ).length
+            : 0;
           return (
             <div
               key={b.id}
@@ -2266,6 +2805,12 @@ export function PayrollTab({
                   Foreman {b.foreman || "—"} · {b.lines.length} employees · {monthLabel(b.month)} ·{" "}
                   {b.status}
                 </p>
+                {attendanceChanges > 0 && (
+                  <span className="mt-1 inline-flex rounded-md bg-amber-100 px-2 py-1 text-[11px] font-bold text-amber-800">
+                    Stale · {attendanceChanges} attendance change
+                    {attendanceChanges === 1 ? "" : "s"}
+                  </span>
+                )}
                 {newAdvanceCount > 0 && (
                   <p className="mt-1 inline-flex rounded-md bg-gold/15 px-2 py-1 text-[11px] font-extrabold text-warn">
                     {newAdvanceCount} new advance{newAdvanceCount === 1 ? "" : "s"} ·{" "}
@@ -2287,11 +2832,21 @@ export function PayrollTab({
               >
                 <Eye size={14} /> View
               </button>
-              {!hasProtectedPayrollPayment(b) && (canDelete || ["DRAFT", "REVIEW"].includes(b.status)) && (
-                <button onClick={() => startEdit(b)} className={btnPrimary}>
-                  <Pencil size={14} /> Edit
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => void beginRefresh(b)}
+                disabled={!canDelete}
+                className={btnOutline}
+                aria-label={`Refresh payroll for ${b.site || "batch"}`}
+              >
+                <RefreshCw size={14} /> Refresh Payroll
+              </button>
+              {!hasProtectedPayrollPayment(b) &&
+                (canDelete || ["DRAFT", "REVIEW"].includes(b.status)) && (
+                  <button onClick={() => startEdit(b)} className={btnPrimary}>
+                    <Pencil size={14} /> Edit
+                  </button>
+                )}
               {canDelete && b.status === "DRAFT" && (
                 <button
                   type="button"
@@ -2319,21 +2874,28 @@ export function PayrollTab({
                   </button>
                 </>
               )}
-              {canDelete && !hasProtectedPayrollPayment(b) && ["APPROVED", "LOCKED"].includes(b.status) && (
-                <button
-                  type="button"
-                  onClick={() => void changeStatus(b, "PAID")}
-                  className={btnPrimary}
-                >
-                  Mark paid
-                </button>
-              )}
+              {canDelete &&
+                !hasProtectedPayrollPayment(b) &&
+                ["APPROVED", "LOCKED"].includes(b.status) && (
+                  <button
+                    type="button"
+                    onClick={() => void changeStatus(b, "PAID")}
+                    className={btnPrimary}
+                  >
+                    Mark paid
+                  </button>
+                )}
               {canDelete && canDeleteUnpaidPayroll(b) && (
                 <button
                   type="button"
                   aria-label={`Delete ${b.site || "payroll batch"} ${b.status} batch`}
                   onClick={() => {
-                    if (window.confirm(`Delete unpaid ${b.status.toLowerCase()} payroll for ${b.site} in ${monthLabel(b.month)}? This permanently removes this batch and its deductions. Paid batches are protected.`)) onDelete(b.id);
+                    if (
+                      window.confirm(
+                        `Delete unpaid ${b.status.toLowerCase()} payroll for ${b.site} in ${monthLabel(b.month)}? This permanently removes this batch and its deductions. Paid batches are protected.`,
+                      )
+                    )
+                      onDelete(b.id);
                   }}
                   className={btnOutline + " hover:border-danger hover:text-danger"}
                 >
@@ -2344,6 +2906,155 @@ export function PayrollTab({
           );
         })}
       </div>
+      <Dialog
+        open={refreshReview !== null}
+        onOpenChange={(open) => {
+          if (!open && !refreshing) {
+            setRefreshReview(null);
+            setRefreshSelection(new Set());
+          }
+        }}
+      >
+        <DialogContent className="flex max-h-[92vh] w-[96vw] max-w-5xl flex-col overflow-hidden sm:rounded-2xl">
+          <DialogHeader className="pr-8 text-left">
+            <DialogTitle className="font-display text-xl font-extrabold text-navy">
+              Refresh Payroll
+            </DialogTitle>
+            <DialogDescription>
+              {refreshReview
+                ? `${refreshReview.batch.site} · ${monthLabel(refreshReview.batch.month)}. Select attendance changes to apply; hours are recalculated across affected site batches.`
+                : "Compare saved payroll attendance with current attendance."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-wrap items-end gap-3 border-b border-border py-3">
+            <label className="flex-1 text-xs font-semibold text-slate-600">
+              Filter employee
+              <input
+                value={refreshEmployeeFilter}
+                onChange={(event) => setRefreshEmployeeFilter(event.target.value)}
+                className={input + " mt-1"}
+                placeholder="Name or employee ID"
+              />
+            </label>
+            <label className="w-full text-xs font-semibold text-slate-600 sm:w-56">
+              Filter site
+              <select
+                value={refreshSiteFilter}
+                onChange={(event) => setRefreshSiteFilter(event.target.value)}
+                className={select + " mt-1"}
+              >
+                <option value="">All sites</option>
+                {refreshSites.map((siteName) => (
+                  <option key={siteName} value={siteName}>
+                    {siteName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-2 pb-2 text-xs font-semibold text-slate-600">
+              <input
+                type="checkbox"
+                checked={
+                  visibleRefreshDiffs.length > 0 &&
+                  visibleRefreshDiffs.every((diff) => refreshSelection.has(diff.id))
+                }
+                onChange={(event) => {
+                  setRefreshSelection((current) => {
+                    const next = new Set(current);
+                    visibleRefreshDiffs.forEach((diff) => {
+                      if (event.target.checked) next.add(diff.id);
+                      else next.delete(diff.id);
+                    });
+                    return next;
+                  });
+                }}
+              />
+              Select all visible
+            </label>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto">
+            {visibleRefreshDiffs.length ? (
+              <table className="w-full min-w-[720px] text-sm">
+                <thead className="sticky top-0 bg-navy-soft text-left text-[10px] font-bold uppercase text-muted-foreground">
+                  <tr>
+                    <th className="px-2 py-2">Select</th>
+                    <th className="px-2 py-2">Employee</th>
+                    <th className="px-2 py-2">Date</th>
+                    <th className="px-2 py-2">Field</th>
+                    <th className="px-2 py-2">Old value → New value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleRefreshDiffs.map((diff) => {
+                    const employee = employees.find((item) => item.id === diff.employeeId);
+                    return (
+                      <tr key={diff.id} className="border-b border-border">
+                        <td className="px-2 py-2">
+                          <input
+                            type="checkbox"
+                            checked={refreshSelection.has(diff.id)}
+                            onChange={(event) => {
+                              setRefreshSelection((current) => {
+                                const next = new Set(current);
+                                if (event.target.checked) next.add(diff.id);
+                                else next.delete(diff.id);
+                                return next;
+                              });
+                            }}
+                            aria-label={`Apply ${diff.field} change for ${employee?.name ?? diff.employeeId}`}
+                          />
+                        </td>
+                        <td className="px-2 py-2 font-semibold text-navy">
+                          {employee?.name ?? `#${diff.employeeId}`}
+                        </td>
+                        <td className="px-2 py-2">{diff.workDate || "—"}</td>
+                        <td className="px-2 py-2">{diff.field}</td>
+                        <td className="px-2 py-2">
+                          <span className="text-muted-foreground">{diff.oldValue}</span>
+                          {" → "}
+                          <span className="font-semibold text-navy">{diff.newValue}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <p className="p-8 text-center text-sm text-muted-foreground">
+                {refreshReview?.diffs.length
+                  ? "No attendance changes match these filters."
+                  : "Attendance is up to date; no missing payroll employees were found."}
+              </p>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 border-t border-border pt-3">
+            <button
+              type="button"
+              className={btnOutline}
+              disabled={refreshing}
+              onClick={() => setRefreshReview(null)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className={btnGold}
+              disabled={!refreshSelection.size || refreshing}
+              onClick={() => {
+                setRefreshing(true);
+                void applyRefresh().finally(() => setRefreshing(false));
+              }}
+            >
+              {refreshing ? (
+                <LoaderCircle size={15} className="animate-spin" />
+              ) : (
+                <RefreshCw size={15} />
+              )}
+              {refreshing ? "Refreshing…" : `Apply ${refreshSelection.size} selected`}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

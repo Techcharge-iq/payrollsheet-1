@@ -9,19 +9,26 @@ import { deleteCachedRows, readCachedRows, writeCachedRows } from "./payroll-cac
 import { attendanceBelongsToBatch, mergeDraftAllocations } from "./multi-site-payroll";
 import { hasProtectedPayrollPayment } from "./payroll-deletion";
 import { fetchAllPages } from "./paged-query";
+import { isPayrollAttendanceSnapshot } from "./payroll-attendance-refresh";
 
 export type TimesheetRecord = Tables<"timesheets">;
 export type PayrollSiteAllocation = Tables<"payroll_site_allocations">;
 type TimesheetInsert = TablesInsert<"timesheets">;
 
 async function assertBatchHasNoPayments(id: string): Promise<void> {
-  const { data: batch, error } = await supabase.from("payroll_batches")
-    .select("status,paid_at").eq("id", id).single();
+  const { data: batch, error } = await supabase
+    .from("payroll_batches")
+    .select("status,paid_at")
+    .eq("id", id)
+    .single();
   if (error) throw error;
-  const lines = await fetchAllPages<{ id: string; paid: number }>(() => supabase
-    .from("payroll_lines").select("id,paid").eq("batch_id", id));
+  const lines = await fetchAllPages<{ id: string; paid: number }>(() =>
+    supabase.from("payroll_lines").select("id,paid").eq("batch_id", id),
+  );
   if (hasProtectedPayrollPayment({ status: batch.status, paid_at: batch.paid_at, lines })) {
-    throw new Error("Payroll with recorded payments cannot be changed. Paid records are protected.");
+    throw new Error(
+      "Payroll with recorded payments cannot be changed. Paid records are protected.",
+    );
   }
 }
 
@@ -107,7 +114,9 @@ async function deriveFallbackAllocations(month: string): Promise<PayrollSiteAllo
     const empTimesheets = monthTimesheets.filter(
       (t) =>
         t.employee_id === line.employee_id &&
-        (!batch || !["DRAFT", "REVIEW"].includes(batch.status) || attendanceBelongsToBatch(t, batch)) &&
+        (!batch ||
+          !["DRAFT", "REVIEW"].includes(batch.status) ||
+          attendanceBelongsToBatch(t, batch)) &&
         (toNum(t.regular_hours) + toNum(t.overtime_hours) > 0 || toNum(t.total_hours) > 0),
     );
 
@@ -211,8 +220,16 @@ export function usePayrollSiteAllocations(month: string, enabled = true) {
       ]);
       const filtered = rows.filter((row) => row.month === month);
       if (filtered.length > 0) {
-        const draftBatchIds = new Set(batches.filter((batch) => batch.month === month && ["DRAFT", "REVIEW"].includes(batch.status)).map((batch) => batch.id));
-        const draftLineIds = new Set(lines.filter((line) => line.month === month && draftBatchIds.has(line.batch_id)).map((line) => line.id));
+        const draftBatchIds = new Set(
+          batches
+            .filter((batch) => batch.month === month && ["DRAFT", "REVIEW"].includes(batch.status))
+            .map((batch) => batch.id),
+        );
+        const draftLineIds = new Set(
+          lines
+            .filter((line) => line.month === month && draftBatchIds.has(line.batch_id))
+            .map((line) => line.id),
+        );
         const resolved = draftLineIds.size
           ? mergeDraftAllocations(filtered, await deriveFallbackAllocations(month), draftLineIds)
           : filtered;
@@ -326,6 +343,9 @@ export function useBatches(month?: string, enabled = true) {
         id: b.id,
         month: b.month,
         site: b.site ?? "",
+        attendance_snapshot: isPayrollAttendanceSnapshot(b.attendance_snapshot)
+          ? b.attendance_snapshot
+          : null,
         project_id: b.project_id,
         foreman_user_id: b.foreman_user_id,
         foreman: b.foreman ?? "",
@@ -454,6 +474,9 @@ export function useSaveBatch(canDelete = false) {
             project_id: batch.project_id ?? null,
             foreman: batch.foreman,
             foreman_user_id: batch.foreman_user_id ?? null,
+            ...(batch.attendance_snapshot
+              ? { attendance_snapshot: batch.attendance_snapshot }
+              : {}),
           })
           .select("*")
           .single();
@@ -539,6 +562,16 @@ export function useSaveBatch(canDelete = false) {
           await deleteCachedRows("payroll_lines", removedIds);
         }
       }
+      if (batch.attendance_snapshot) {
+        const { data, error } = await supabase
+          .from("payroll_batches")
+          .update({ attendance_snapshot: batch.attendance_snapshot })
+          .eq("id", batchId)
+          .select("*")
+          .single();
+        if (error) throw error;
+        await writeCachedRows("payroll_batches", [data]);
+      }
       return batchId;
     },
     onSuccess: () => {
@@ -562,8 +595,15 @@ export function useDeleteBatch() {
       );
       await deleteCachedRows("payroll_batches", [id]);
       const allocations = await readCachedRows<PayrollSiteAllocation>("payroll_site_allocations");
-      const deletedLineIds = new Set(lines.filter((line) => line.batch_id === id).map((line) => line.id));
-      await deleteCachedRows("payroll_site_allocations", allocations.filter((allocation) => deletedLineIds.has(allocation.payroll_line_id)).map((allocation) => allocation.id));
+      const deletedLineIds = new Set(
+        lines.filter((line) => line.batch_id === id).map((line) => line.id),
+      );
+      await deleteCachedRows(
+        "payroll_site_allocations",
+        allocations
+          .filter((allocation) => deletedLineIds.has(allocation.payroll_line_id))
+          .map((allocation) => allocation.id),
+      );
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["payroll_batches"] });
@@ -620,7 +660,11 @@ export function useUpdateLineForeman() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, foreman }: { id: string; foreman: string }) => {
-      const { data: line, error: lineError } = await supabase.from("payroll_lines").select("batch_id").eq("id", id).single();
+      const { data: line, error: lineError } = await supabase
+        .from("payroll_lines")
+        .select("batch_id")
+        .eq("id", id)
+        .single();
       if (lineError) throw lineError;
       await assertBatchHasNoPayments(line.batch_id);
       const { data, error } = await supabase
