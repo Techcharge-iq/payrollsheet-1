@@ -1,4 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("pdfjs-dist", () => ({
+  GlobalWorkerOptions: {},
+  getDocument: () => ({ promise: Promise.resolve({ numPages: 0 }) }),
+}));
+vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({
+  default: "",
+}));
+
 import { readAttendanceImport } from "../attendance-import";
 
 const employees = [
