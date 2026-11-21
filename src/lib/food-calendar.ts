@@ -29,6 +29,8 @@ export function calendarSiteFood(month: string, site: string, entries: SiteEntry
     const deployment = deployments.filter((row) => row.effective_from <= date && (!row.effective_to || row.effective_to >= date))
       .sort((a, b) => b.effective_from.localeCompare(a.effective_from) || a.site.localeCompare(b.site))[0];
     const recorded = dated.find((entry) => entry.work_date === date);
+    // Days left as "--" (no attendance, e.g. before joining) are not charged.
+    if (dated.length && !recorded) continue;
     const previous = dated.filter((entry) => entry.work_date <= date).at(-1);
     const assignedSite = deployment?.site ?? recorded?.site ?? previous?.site ?? dated[0]?.site;
     if (assignedSite && sameSite(assignedSite, site)) days++;

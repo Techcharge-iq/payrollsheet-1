@@ -169,7 +169,7 @@ export function EmployeeModal({
                 Food deduction
               </label>
               <label className="mt-2 block text-xs font-semibold text-slate-600">
-                Food deduction amount (OMR)
+                Food deduction (1 OMR per day)
                 <input
                   type="number"
                   min="0"
@@ -181,7 +181,7 @@ export function EmployeeModal({
                   className={`${input} mt-1`}
                 />
                 <span className="mt-1 block font-normal text-muted-foreground">
-                  New employees use the configured default of {fmt(defaultFoodDeduction)} OMR.
+                  Charged 1 OMR for every day with attendance (incl. absent/weekoff). Days marked -- (e.g. not joined yet) are not charged.
                 </span>
               </label>
             </div>

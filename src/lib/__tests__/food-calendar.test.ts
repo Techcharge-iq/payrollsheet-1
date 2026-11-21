@@ -18,10 +18,10 @@ describe("calendar-day food at 1 OMR", () => {
     expect(monthlyCalendarFood("2026-10", 0)).toBe(0);
   });
   it("charges absent days", () => {
-    expect(calendarSiteFood("2026-10", "A", [{ site: "A", work_date: "2026-10-01", status: "ABSENT" }], [], 30)).toBe(31);
+    expect(calendarSiteFood("2026-10", "A", [{ site: "A", work_date: "2026-10-01", status: "ABSENT" }], [], 30)).toBe(1);
   });
   it("charges weekoffs", () => {
-    expect(calendarSiteFood("2026-10", "A", [{ site: "A", work_date: "2026-10-01", status: "WEEK_OFF" }], [], 30)).toBe(31);
+    expect(calendarSiteFood("2026-10", "A", [{ site: "A", work_date: "2026-10-01", status: "WEEK_OFF" }], [], 30)).toBe(1);
   });
   it("splits a transfer on the deployment date including days without punches", () => {
     const deployments: FoodDeployment[] = [
@@ -33,7 +33,11 @@ describe("calendar-day food at 1 OMR", () => {
   });
   it("counts a date once even with duplicate attendance", () => {
     const entries = [{ site: "A", work_date: "2026-10-01" }, { site: "A", work_date: "2026-10-01" }];
-    expect(calendarSiteFood("2026-10", "A", entries, [], 30)).toBe(31);
+    expect(calendarSiteFood("2026-10", "A", entries, [], 30)).toBe(1);
+  });
+  it("skips days marked -- before joining (joined day 11 of October)", () => {
+    const entries = Array.from({ length: 21 }, (_, i) => ({ site: "A", work_date: `2026-10-${String(i + 11).padStart(2, "0")}`, status: i % 7 ? "PRESENT" : "ABSENT" }));
+    expect(calendarSiteFood("2026-10", "A", entries, [], 30)).toBe(21);
   });
   it("allows Employee 144's full calendar charge with absence and weekoff", () => {
     const batches = [{ id: "a", month: "2026-10", site: "A", status: "DRAFT", lines: [] }] as unknown as PayrollBatch[];
