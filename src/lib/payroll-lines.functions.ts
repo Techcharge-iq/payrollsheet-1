@@ -24,6 +24,7 @@ const lineSchema = z
     prev_advance: z.number().min(0),
     gross_pay: z.number().min(0),
     other_deduction: z.number().min(0),
+    paid: z.number().min(0),
   })
   .passthrough();
 
@@ -81,7 +82,7 @@ export const savePayrollLines = createServerFn({ method: "POST" })
     }));
 
     const [historyBatches, historyLines, advances, attendance, employees, settings, deployments] = await Promise.all([
-      fetchAllPages<any>(() => admin.from("payroll_batches").select("id,month,site,status,paid_at,foreman")),
+      fetchAllPages<any>(() => admin.from("payroll_batches").select("id,month,site,status,paid_at,paid_by,foreman")),
       fetchAllPages<any>(() => admin.from("payroll_lines").select("*")),
       fetchAllPages<AdvanceTx>(() => admin.from("advance_transactions").select("*")),
       fetchAllPages<any>(() => admin.from("timesheets").select("id,employee_id,work_date,site,status").gte("work_date", `${[...months].sort()[0]}-01`).lt("work_date", `${nextPayrollMonth([...months].sort().at(-1) ?? "")}-01`)),

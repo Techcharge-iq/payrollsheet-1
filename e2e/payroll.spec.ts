@@ -856,6 +856,83 @@ test("admin can create an unassigned foreman account and later choose a complete
   await expect(page.getByRole("cell", { name: "East Yard", exact: true })).toBeVisible();
 });
 
+for (const mobile of [false, true]) {
+  test(`partially paid payroll preserves paid staff and saves unpaid staff (${mobile ? "mobile" : "desktop"})`, async ({ page }, testInfo) => {
+    await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1280, height: 1800 });
+    const backend = await mockPayrollBackend(page, "admin");
+    const month = new Date().toISOString().slice(0, 7);
+    const batchId = randomUUID();
+    const paidId = randomUUID();
+    const unpaidId = randomUUID();
+    backend.state.employees.push({ id: 2, name: "Unpaid Coworker", trade: "HELPER", id_number: "E-002", hourly_rate: 3, default_food_deduction: 0, status: "Active", created_at: timestamp });
+    backend.state.payroll_batches.push({ id: batchId, month, site: "North Campus", project_id: northCampusId, foreman: "Samir", foreman_user_id: foremanUserId, status: "DRAFT", paid_at: null, paid_by: null, created_at: timestamp });
+    const values = { batch_id: batchId, month, foreman: "Samir", hours: 80, rate: 3, food_deduction: 0, prev_advance: 0, new_advance: 0, other_deduction: 0, net_salary: 240, created_at: timestamp };
+    backend.state.payroll_lines.push({ ...values, id: paidId, employee_id: 1, paid: 163.05 }, { ...values, id: unpaidId, employee_id: 2, paid: 0 });
+    const protectedBefore = JSON.stringify(backend.state.payroll_lines[0]);
+    const writtenIds: string[] = [];
+    // Isolated browser contract test: the real authenticated server boundary is covered by unit guards.
+    await page.route("**/src/lib/payroll-lines.functions.ts*", route => route.fulfill({ contentType: "application/javascript", body: `
+      import { db } from '/src/integrations/supabase/external-client.ts';
+      export async function savePayrollLines({data}) {
+        const {data: rows, error} = await db.from('payroll_lines').upsert(data.rows, {onConflict:'id'}).select('*');
+        if(error) throw new Error(error.message);
+        return {rows};
+      }
+    ` }));
+    for (const table of ["payroll_batches", "payroll_lines"] as const) {
+      await page.route(`${supabaseUrl}/rest/v1/${table}?*`, async route => {
+        const request = route.request();
+        const url = new URL(request.url());
+        if (request.method() === "GET") {
+          let rows = [...backend.state[table]];
+          for (const field of ["id", "batch_id"] as const) {
+            const value = url.searchParams.get(field);
+            if (value?.startsWith("eq.")) rows = rows.filter(row => String(row[field]) === value.slice(3));
+          }
+          await route.fulfill({ json: request.headers()["accept"]?.includes("vnd.pgrst.object") ? rows[0] : rows });
+        } else if (table === "payroll_lines" && request.method() === "POST") {
+          const rows = request.postDataJSON() as Array<Record<string, unknown>>;
+          for (const row of rows) {
+            writtenIds.push(String(row["id"]));
+            const existing = backend.state.payroll_lines.find(line => line["id"] === row["id"]);
+            if (existing) Object.assign(existing, row);
+            else backend.state.payroll_lines.push(row);
+          }
+          await route.fulfill({ json: rows });
+        } else await route.fallback();
+      });
+    }
+    await page.goto("/");
+    await expect(page.getByText("Syncing payroll data…")).toBeHidden({ timeout: 20_000 });
+    await openTab(page, "Monthly Payroll", mobile);
+    const card = page.locator(".mobile-batch-card").filter({ hasText: "North Campus" });
+    await expect(card.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
+    await card.getByRole("button", { name: "Edit", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByLabel("Payroll project")).toBeDisabled();
+    const paidRow = mobile ? dialog.locator("fieldset").filter({ hasText: "E-001" }) : dialog.getByRole("row").filter({ hasText: "E-001" });
+    const unpaidRow = mobile ? dialog.locator("fieldset").filter({ hasText: "E-002" }) : dialog.getByRole("row").filter({ hasText: "E-002" });
+    await expect(paidRow.locator('input[type="number"]').first()).toBeDisabled();
+    await expect(paidRow.getByTitle("Remove line")).toHaveCount(0);
+    await unpaidRow.locator('input[type="number"]').first().fill("90");
+    await dialog.screenshot({ path: testInfo.outputPath("partial-payment-editor.png") });
+    await dialog.getByRole("button", { name: "Save batch" }).click();
+    await expect(dialog).toBeHidden();
+    expect(backend.state.payroll_lines.find(row => row["id"] === unpaidId)?.["hours"]).toBe(90);
+    expect(backend.state.payroll_lines.find(row => row["id"] === unpaidId)?.["net_salary"]).toBe(270);
+    expect(JSON.stringify(backend.state.payroll_lines.find(row => row["id"] === paidId))).toBe(protectedBefore);
+    expect(writtenIds).toEqual([unpaidId]);
+    await card.getByRole("button", { name: "Edit", exact: true }).click();
+    await expect(unpaidRow.locator('input[type="number"]').first()).toHaveValue("90");
+    await unpaidRow.locator('input[type="number"]').last().fill("50");
+    await dialog.getByRole("button", { name: "Save batch" }).click();
+    await expect(dialog).toBeHidden();
+    expect(backend.state.payroll_lines.find(row => row["id"] === unpaidId)?.["paid"]).toBe(50);
+    expect(JSON.stringify(backend.state.payroll_lines.find(row => row["id"] === paidId))).toBe(protectedBefore);
+    await expect(card.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+  });
+}
+
 test("admin can open a finalized payroll batch for editing", async ({ page }) => {
   const backend = await mockPayrollBackend(page, "admin");
   const month = new Date().toISOString().slice(0, 7);

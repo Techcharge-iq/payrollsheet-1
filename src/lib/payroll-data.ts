@@ -8,6 +8,7 @@ import { calculatePayroll, PAYROLL_CALCULATION_VERSION, PAYROLL_POLICY, toNum } 
 import { deleteCachedRows, readCachedRows, writeCachedRows } from "./payroll-cache";
 import { attendanceBelongsToBatch, mergeDraftAllocations } from "./multi-site-payroll";
 import { hasProtectedPayrollPayment } from "./payroll-deletion";
+import { assertPaidBatchIdentityUnchanged, assertPayrollLineEditable, editablePayrollLines, hasLinePayment } from "./payroll-editability";
 import { fetchAllPages } from "./paged-query";
 import { isPayrollAttendanceSnapshot } from "./payroll-attendance-refresh";
 
@@ -468,22 +469,32 @@ export function useSaveBatch(canDelete = false) {
       const currentOvertimeMultiplier =
         (policyRow as { overtime_multiplier: number | null } | null)?.overtime_multiplier ?? null;
       let batchId = batch.id;
+      let linesToSave = batch.lines;
+      let previousLines: Tables<"payroll_lines">[] = [];
       if (batchId) {
-        await assertBatchHasNoPayments(batchId);
-        const { data, error } = await supabase
-          .from("payroll_batches")
-          .update({
-            month: batch.month,
-            site: batch.site,
-            project_id: batch.project_id ?? null,
-            foreman: batch.foreman,
-            foreman_user_id: batch.foreman_user_id ?? null,
-          })
-          .eq("id", batchId)
-          .select("*")
-          .single();
-        if (error) throw error;
-        await writeCachedRows("payroll_batches", [data]);
+        const { data: currentBatch, error: batchError } = await supabase.from("payroll_batches").select("*").eq("id", batchId).single();
+        if (batchError) throw batchError;
+        previousLines = await fetchAllPages<Tables<"payroll_lines">>(() => supabase.from("payroll_lines").select("*").eq("batch_id", batchId));
+        const original = { ...currentBatch, lines: previousLines } as PayrollBatch;
+        assertPaidBatchIdentityUnchanged(original, batch);
+        linesToSave = editablePayrollLines(original, batch.lines);
+        // Shared metadata must not move paid employees to another site/month.
+        if (!previousLines.some(hasLinePayment)) {
+          const { data, error } = await supabase
+            .from("payroll_batches")
+            .update({
+              month: batch.month,
+              site: batch.site,
+              project_id: batch.project_id ?? null,
+              foreman: batch.foreman,
+              foreman_user_id: batch.foreman_user_id ?? null,
+            })
+            .eq("id", batchId)
+            .select("*")
+            .single();
+          if (error) throw error;
+          await writeCachedRows("payroll_batches", [data]);
+        }
       } else {
         const { data, error } = await supabase
           .from("payroll_batches")
@@ -500,7 +511,7 @@ export function useSaveBatch(canDelete = false) {
         batchId = data.id;
         await writeCachedRows("payroll_batches", [data]);
       }
-      const rows = batch.lines
+      const rows = linesToSave
         .filter((l) => l.employee_id)
         .map((l) => {
           const regularHours =
@@ -555,12 +566,7 @@ export function useSaveBatch(canDelete = false) {
 
       let previousLineIds: string[] = [];
       if (batch.id && canDelete) {
-        const { data, error } = await supabase
-          .from("payroll_lines")
-          .select("id")
-          .eq("batch_id", batchId);
-        if (error) throw error;
-        previousLineIds = (data ?? []).map((line) => line.id);
+        previousLineIds = previousLines.filter((line) => !hasLinePayment(line)).map((line) => line.id);
       }
 
       if (rows.length) {
@@ -680,11 +686,13 @@ export function useUpdateLineForeman() {
     mutationFn: async ({ id, foreman }: { id: string; foreman: string }) => {
       const { data: line, error: lineError } = await supabase
         .from("payroll_lines")
-        .select("batch_id")
+        .select("id,batch_id,employee_id,paid")
         .eq("id", id)
         .single();
       if (lineError) throw lineError;
-      await assertBatchHasNoPayments(line.batch_id);
+      const { data: batch, error: batchError } = await supabase.from("payroll_batches").select("*").eq("id", line.batch_id).single();
+      if (batchError) throw batchError;
+      assertPayrollLineEditable({ ...batch, lines: [line] }, line);
       const { data, error } = await supabase
         .from("payroll_lines")
         .update({ foreman })

@@ -36,4 +36,10 @@ describe("October multi-site save deduction guard", () => {
     const partial = batches.map((batch) => batch.id === "b" ? { ...batch, lines: [{ employee_id: 7, paid: 1 }] } : batch) as PayrollBatch[];
     expect(() => assertPayrollDeductionLimits([row], partial, advances, entries, defaults)).toThrow("Paid payroll records");
   });
+  it("allows saving an unpaid coworker without changing a paid employee's deductions", () => {
+    const partial = batches.map((batch) => batch.id === "b" ? { ...batch, lines: [{ id: "paid-coworker", employee_id: 8, paid: 163.05, food_deduction: 31, prev_advance: 25, new_advance: 0 }] } : batch) as PayrollBatch[];
+    const before = JSON.stringify(partial);
+    expect(() => assertPayrollDeductionLimits([row], partial, advances, entries, defaults)).not.toThrow();
+    expect(JSON.stringify(partial)).toBe(before);
+  });
 });

@@ -79,6 +79,7 @@ import { NewAdvanceValue } from "./NewAdvanceValue";
 import { dbAny } from "@/integrations/supabase/external-client";
 import { fetchAllPages } from "@/lib/paged-query";
 import { canDeleteUnpaidPayroll, hasProtectedPayrollPayment } from "@/lib/payroll-deletion";
+import { canEditPayrollEmployees, hasLinePayment, isPayrollBatchFinalized } from "@/lib/payroll-editability";
 import { assertPayrollDeductionLimits } from "@/lib/payroll-deduction-guard";
 import {
   applySelectedAttendanceDiffs,
@@ -1062,9 +1063,9 @@ export function PayrollTab({
     if (
       !canDelete ||
       !["DRAFT", "REVIEW"].includes(batch.status) ||
-      hasProtectedPayrollPayment(batch)
+      isPayrollBatchFinalized(batch)
     ) {
-      notify("Only unpaid Draft or Review payroll batches can be refreshed.", "warn");
+      notify("Only unfinalized Draft or Review payroll batches can be refreshed; paid employees remain protected.", "warn");
       return;
     }
     if (
@@ -1099,7 +1100,8 @@ export function PayrollTab({
       const paidEmployeeIds = new Set(
         monthBatches.flatMap((item) => item.lines.map((line) => Number(line.employee_id))),
       );
-      const diffs = diffPayrollAttendance(batch.attendance_snapshot, current, paidEmployeeIds);
+      const protectedIds = new Set(monthBatches.flatMap((item) => item.lines.filter((line) => isPayrollBatchFinalized(item) || hasLinePayment(line)).map((line) => Number(line.employee_id))));
+      const diffs = diffPayrollAttendance(batch.attendance_snapshot, current, paidEmployeeIds).filter((diff) => !protectedIds.has(diff.employeeId));
       setRefreshReview({ batch, current, diffs });
       setRefreshSelection(new Set());
       setRefreshEmployeeFilter("");
@@ -1115,25 +1117,35 @@ export function PayrollTab({
   };
 
   const refreshAllBatches = async () => {
-    await timesheetsQuery.refetch();
-    await batchesQuery.refetch();
+    const [attendanceResult, batchResult] = await Promise.all([timesheetsQuery.refetch(), batchesQuery.refetch()]);
+    if (attendanceResult.error || batchResult.error) {
+      notify("Could not reload attendance and payroll. Please retry.", "warn");
+      return;
+    }
+    const freshBatches = (batchResult.data ?? []).filter((b) => b.month === month);
+    const freshSnapshot = attendanceSnapshot((attendanceResult.data ?? []).map((entry) => ({
+      employee_id: entry.employee_id, work_date: entry.work_date, status: entry.status,
+      regular_hours: Number(entry.regular_hours ?? 0), overtime_hours: Number(entry.overtime_hours ?? 0),
+      site: entry.site, project_id: entry.project_id ?? null, foreman: entry.foreman,
+    })));
     const paidIds = new Set(
-      monthBatches.flatMap((item) => item.lines.map((line) => Number(line.employee_id))),
+      freshBatches.flatMap((item) => item.lines.map((line) => Number(line.employee_id))),
     );
-    const editable = monthBatches.filter(
-      (b) => ["DRAFT", "REVIEW"].includes(b.status) && !hasProtectedPayrollPayment(b),
+    const protectedIds = new Set(freshBatches.flatMap((item) => item.lines.filter((line) => isPayrollBatchFinalized(item) || hasLinePayment(line)).map((line) => Number(line.employee_id))));
+    const editable = freshBatches.filter(
+      (b) => ["DRAFT", "REVIEW"].includes(b.status) && !isPayrollBatchFinalized(b),
     );
     const changed = editable.find(
       (b) =>
         b.attendance_snapshot &&
-        diffPayrollAttendance(b.attendance_snapshot, monthAttendanceSnapshot, paidIds).length > 0,
+        diffPayrollAttendance(b.attendance_snapshot, freshSnapshot, paidIds).some((diff) => !protectedIds.has(diff.employeeId)),
     );
     if (changed) return beginRefresh(changed);
     const noSnapshot = editable.filter((b) => !b.attendance_snapshot).length;
     notify(
       noSnapshot
         ? `All batches refreshed. ${noSnapshot} older batch(es) have no saved attendance copy — use Edit to review them, or regenerate.`
-        : "All batches refreshed. No attendance edits found since payroll was generated.",
+        : "All batches checked. No editable attendance changes found; paid employees remain protected.",
       noSnapshot ? "warn" : "ok",
     );
   };
@@ -1150,6 +1162,8 @@ export function PayrollTab({
     const plannedBatchIds = new Set<string>();
 
     try {
+      const protectedIds = new Set(monthBatches.flatMap((item) => item.lines.filter((line) => isPayrollBatchFinalized(item) || hasLinePayment(line)).map((line) => Number(line.employee_id))));
+      if ([...affectedEmployeeIds].some((id) => protectedIds.has(id))) throw new Error("Paid employees cannot be refreshed. Reload the batch and select unpaid employees only.");
       for (const batch of monthBatches) {
         if (!batch.attendance_snapshot) continue;
         const snapshot = applySelectedAttendanceDiffs(
@@ -1175,10 +1189,10 @@ export function PayrollTab({
         if (
           !canDelete ||
           !["DRAFT", "REVIEW"].includes(batch.status) ||
-          hasProtectedPayrollPayment(batch)
+          isPayrollBatchFinalized(batch)
         ) {
           throw new Error(
-            `Attendance changes affect ${batch.site} payroll, which must be unpaid and in Draft or Review before it can be refreshed.`,
+            `Attendance changes affect ${batch.site} payroll, which must be unfinalized and in Draft or Review before it can be refreshed.`,
           );
         }
 
@@ -1429,12 +1443,18 @@ export function PayrollTab({
     }
   };
 
+  function isProtectedDraftLine(line: PayrollLine): boolean {
+    if (!draft?.id || !line.id) return false;
+    const original = batches.find((batch) => batch.id === draft.id)?.lines.find((item) => item.id === line.id);
+    return !!original && hasLinePayment(original);
+  }
+
   const startEdit = (batch: PayrollBatch) => {
     setImportErrors([]);
     setSubmitError("");
-    if (hasProtectedPayrollPayment(batch)) {
+    if (isPayrollBatchFinalized(batch) || (batch.lines.length > 0 && !canEditPayrollEmployees(batch))) {
       notify(
-        "Payroll with recorded payments cannot be edited. Paid records are protected.",
+        "This batch is finalized or all employees have payments. Paid employees are protected.",
         "warn",
       );
       return;
@@ -1446,7 +1466,7 @@ export function PayrollTab({
     setDraft({
       ...batch,
       project_id:
-        batch.project_id ?? projects.find((project) => project.name === batch.site)?.id ?? null,
+        batch.project_id ?? (batch.lines.some(hasLinePayment) ? null : projects.find((project) => project.name === batch.site)?.id ?? null),
     });
   };
 
@@ -1459,8 +1479,8 @@ export function PayrollTab({
 
   const validationErrors = useMemo(
     () =>
-      draft ? validateBatch(draft, month, employees, availableAdvance, locked, payrollPolicy) : [],
-    [draft, month, employees, availableAdvance, locked, payrollPolicy],
+      draft ? validateBatch({ ...draft, lines: draft.lines.filter((line) => !isProtectedDraftLine(line)) }, month, employees, availableAdvance, locked, payrollPolicy) : [],
+    [draft, month, employees, availableAdvance, locked, payrollPolicy, batches],
   );
 
   const importFile = async (file: File) => {
@@ -1621,7 +1641,7 @@ export function PayrollTab({
     setDraft((d) => {
       if (!d) return d;
       const lines = d.lines.map((l, i) => {
-        if (i !== idx) return l;
+        if (i !== idx || isProtectedDraftLine(l)) return l;
         const next = { ...l, ...patch };
         if (
           patch.hours !== undefined ||
@@ -2197,6 +2217,7 @@ export function PayrollTab({
                 </label>
                 <select
                   value={draft.project_id ?? (draft.site ? "legacy-site" : "")}
+                  disabled={draft.lines.some(isProtectedDraftLine)}
                   onChange={(event) => {
                     if (event.target.value === "legacy-site") {
                       setDraft({ ...draft, project_id: null });
@@ -2231,6 +2252,7 @@ export function PayrollTab({
                 </label>
                 <select
                   value={draft.foreman_user_id ?? (draft.foreman ? "legacy" : "")}
+                  disabled={draft.lines.some(isProtectedDraftLine)}
                   onChange={(event) => {
                     if (event.target.value === "legacy") {
                       setDraft({ ...draft, foreman_user_id: null });
@@ -2351,12 +2373,17 @@ export function PayrollTab({
                       return (
                         <tr key={idx} className="border-b border-border align-top last:border-0">
                           <td className="px-3 py-2">
-                            <EmployeeSearchSelect
+                            {isProtectedDraftLine(l) ? (
+                              <div className="text-xs font-semibold text-foreground">
+                                {employees.find((employee) => employee.id === l.employee_id)?.name ?? l.employee_id}
+                                <p className="mt-1 text-[10px] text-muted-foreground">Payment recorded · protected</p>
+                              </div>
+                            ) : <EmployeeSearchSelect
                               employees={employees}
                               locked={locked}
                               value={l.employee_id}
                               onPick={(v) => pickEmployee(idx, v)}
-                            />
+                            />}
                             {l.employee_id !== "" && (carry > 0 || toNum(l.new_advance) > 0) && (
                               <div className="mt-1 space-y-0.5 text-[10px] font-semibold">
                                 <p className="text-warn">
@@ -2404,6 +2431,7 @@ export function PayrollTab({
                               <button
                                 type="button"
                                 onClick={() => setForemanLine(idx)}
+                                disabled={isProtectedDraftLine(l)}
                                 title="Change foreman for this employee"
                                 className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-gold hover:bg-gold/10"
                               >
@@ -2418,6 +2446,7 @@ export function PayrollTab({
                                 type="number"
                                 step="0.01"
                                 value={l[f] as string}
+                                disabled={isProtectedDraftLine(l)}
                                 onChange={(e) => setLine(idx, { [f]: e.target.value })}
                                 className={`${inputSm} w-20 text-right`}
                               />
@@ -2439,6 +2468,7 @@ export function PayrollTab({
                                 type="number"
                                 step="0.01"
                                 value={l[f] as string}
+                                disabled={isProtectedDraftLine(l)}
                                 onChange={(e) => setLine(idx, { [f]: e.target.value })}
                                 className={`${inputSm} w-20 text-right ${f === "new_advance" && toNum(l.new_advance) > 0 ? "border-gold bg-gold/10 font-extrabold text-warn" : ""}`}
                               />
@@ -2464,6 +2494,7 @@ export function PayrollTab({
                               type="number"
                               step="0.01"
                               value={l.paid as string}
+                              disabled={isProtectedDraftLine(l)}
                               onChange={(e) => setLine(idx, { paid: e.target.value })}
                               className={inputSm + " w-20 text-right"}
                             />
@@ -2472,7 +2503,7 @@ export function PayrollTab({
                             {fmt(toNum(l.net_salary) - toNum(l.paid))}
                           </td>
                           <td className="px-2 py-2">
-                            {(canDelete || !l.id) && (
+                            {!isProtectedDraftLine(l) && (canDelete || !l.id) && (
                               <button
                                 type="button"
                                 title="Remove line"
@@ -2513,8 +2544,9 @@ export function PayrollTab({
               {/* Mobile: one card per employee */}
               <div className="space-y-3 p-3 md:hidden">
                 {draft.lines.map((l, idx) => (
-                  <div
+                  <fieldset
                     key={idx}
+                    disabled={isProtectedDraftLine(l)}
                     className="mobile-payroll-card rounded-lg border border-border bg-card p-3 shadow-sm"
                   >
                     <div className="mb-2 flex items-start gap-2">
@@ -2528,8 +2560,9 @@ export function PayrollTab({
                         <p className="mt-1 font-mono text-[10px] text-slate-500">
                           ID {empIdLabel(employees, l.employee_id)}
                         </p>
+                        {isProtectedDraftLine(l) && <p className="mt-1 text-xs font-semibold text-muted-foreground">Payment recorded · protected</p>}
                       </div>
-                      {(canDelete || !l.id) && (
+                      {!isProtectedDraftLine(l) && (canDelete || !l.id) && (
                         <button
                           type="button"
                           title="Remove line"
@@ -2614,7 +2647,7 @@ export function PayrollTab({
                       <span>Gross {fmt(lineGross(l))}</span>
                       <span>Balance {fmt(toNum(l.net_salary) - toNum(l.paid))}</span>
                     </p>
-                  </div>
+                  </fieldset>
                 ))}
 
                 {totals && (
@@ -2866,13 +2899,13 @@ export function PayrollTab({
               >
                 <Eye size={14} /> View
               </button>
-              {!hasProtectedPayrollPayment(b) &&
+              {!isPayrollBatchFinalized(b) && (b.lines.length === 0 || canEditPayrollEmployees(b)) &&
                 (canDelete || ["DRAFT", "REVIEW"].includes(b.status)) && (
                   <button onClick={() => startEdit(b)} className={btnPrimary}>
                     <Pencil size={14} /> Edit
                   </button>
                 )}
-              {canDelete && b.status === "DRAFT" && (
+              {canDelete && !hasProtectedPayrollPayment(b) && b.status === "DRAFT" && (
                 <button
                   type="button"
                   onClick={() => void changeStatus(b, "REVIEW")}
@@ -2881,7 +2914,7 @@ export function PayrollTab({
                   <CheckCircle2 size={14} /> Submit review
                 </button>
               )}
-              {canDelete && b.status === "REVIEW" && (
+              {canDelete && !hasProtectedPayrollPayment(b) && b.status === "REVIEW" && (
                 <>
                   <button
                     type="button"
@@ -2909,6 +2942,9 @@ export function PayrollTab({
                   >
                     Mark paid
                   </button>
+                )}
+                {b.lines.some(hasLinePayment) && !isPayrollBatchFinalized(b) && (
+                  <p className="mt-1 text-xs font-semibold text-muted-foreground">{b.lines.filter(hasLinePayment).length} employee(s) payment-protected · unpaid employees editable</p>
                 )}
               {canDelete && canDeleteUnpaidPayroll(b) && (
                 <button
