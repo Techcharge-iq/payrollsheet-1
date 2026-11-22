@@ -38,14 +38,14 @@ function writeLocalSnapshot(id: string, snapshot: unknown) {
 async function assertBatchHasNoPayments(id: string): Promise<void> {
   const { data: batch, error } = await supabase
     .from("payroll_batches")
-    .select("status,paid_at")
+    .select("status,paid_at,paid_by")
     .eq("id", id)
     .single();
   if (error) throw error;
   const lines = await fetchAllPages<{ id: string; paid: number }>(() =>
     supabase.from("payroll_lines").select("id,paid").eq("batch_id", id),
   );
-  if (hasProtectedPayrollPayment({ status: batch.status, paid_at: batch.paid_at, lines })) {
+  if (hasProtectedPayrollPayment({ status: batch.status, paid_at: batch.paid_at, paid_by: batch.paid_by, lines })) {
     throw new Error(
       "Payroll with recorded payments cannot be changed. Paid records are protected.",
     );
@@ -334,7 +334,7 @@ export function useBatches(month?: string, enabled = true) {
           new_advance: Number(l.new_advance),
           other_deduction: Number(l.other_deduction),
           net_salary: Number(l.net_salary),
-          paid: Number(l.paid),
+          paid: l.paid == null ? Number.NaN : Number(l.paid),
           calculation_version: l.calculation_version,
           regular_hours: l.regular_hours,
           overtime_hours: l.overtime_hours,

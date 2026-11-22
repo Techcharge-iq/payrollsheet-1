@@ -18,6 +18,13 @@ describe("unpaid payroll deletion", () => {
     expect(canDeleteUnpaidPayroll({ status: "APPROVED", paid_at: "2026-10-31", lines: [{ paid: 0 }] })).toBe(false);
     expect(canDeleteUnpaidPayroll({ status: "LOCKED", lines: [{ paid: 0 }] })).toBe(false);
   });
+  it("protects a paid-by marker even when paid-at and amounts are missing or zero", () => {
+    expect(canDeleteUnpaidPayroll({ status: "APPROVED", paid_by: "admin", paid_at: null, lines: [{ paid: 0 }] })).toBe(false);
+    expect(hasProtectedPayrollPayment({ status: "DRAFT", paid_by: "admin", lines: [{ paid: 0 }] })).toBe(true);
+  });
+  it("protects locked batch metadata even before a payment amount is recorded", () => {
+    expect(hasProtectedPayrollPayment({ status: "LOCKED", lines: [{ paid: 0 }] })).toBe(true);
+  });
   it("fails closed on invalid amounts and rejects deletion before writes", () => {
     expect(() => assertUnpaidPayrollDeletion({ status: "DRAFT", lines: [{ paid: "invalid" }] })).toThrow("Paid records are protected");
   });

@@ -1,12 +1,13 @@
 export interface DeletablePayrollBatch {
   status: string;
   paid_at?: string | null | undefined;
+  paid_by?: string | null | undefined;
   lines: Array<{ paid: unknown }>;
 }
 
 /** Payment markers and any nonzero payment protect the whole batch. */
 export function hasProtectedPayrollPayment(batch: DeletablePayrollBatch): boolean {
-  return batch.status === "PAID" || !!batch.paid_at || batch.lines.some((line) => {
+  return batch.status === "PAID" || batch.status === "LOCKED" || !!batch.paid_at || !!batch.paid_by || batch.lines.some((line) => {
     if (line.paid === null || line.paid === undefined) return true;
     const paid = Number(line.paid);
     return !Number.isFinite(paid) || paid !== 0;

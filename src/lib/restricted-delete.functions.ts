@@ -35,8 +35,8 @@ export const deletePayrollRecord = createServerFn({ method: "POST" })
         .from("payroll_lines").select("id,batch_id,paid").eq("employee_id", data.id));
       const batchIds = [...new Set(payrollLines.map((line) => line.batch_id))];
       for (let start = 0; start < batchIds.length; start += 100) {
-        const batches = await fetchAllPages<{ id: string; status: string; paid_at: string | null }>(() => admin
-          .from("payroll_batches").select("id,status,paid_at").in("id", batchIds.slice(start, start + 100)));
+        const batches = await fetchAllPages<{ id: string; status: string; paid_at: string | null; paid_by: string | null }>(() => admin
+          .from("payroll_batches").select("id,status,paid_at,paid_by").in("id", batchIds.slice(start, start + 100)));
         if (batches.some((batch) => hasProtectedPayrollPayment({ ...batch, lines: payrollLines.filter((line) => line.batch_id === batch.id) }))) {
           throw new Error("This employee has paid payroll history and cannot be deleted. Paid records are protected.");
         }
@@ -57,14 +57,14 @@ export const deletePayrollRecord = createServerFn({ method: "POST" })
 
     const { data: batch, error: batchError } = await admin
       .from("payroll_batches")
-      .select("id,status,paid_at")
+      .select("id,status,paid_at,paid_by")
       .eq("id", data.id)
       .maybeSingle();
     if (batchError) throw new Error(`Could not check payroll payments: ${batchError.message}`);
     if (!batch) throw new Error("The payroll batch was not found or was already deleted.");
     const lines = await fetchAllPages<{ id: string; paid: number }>(() => admin
       .from("payroll_lines").select("id,paid").eq("batch_id", data.id));
-    assertUnpaidPayrollDeletion({ status: batch.status, paid_at: batch.paid_at, lines });
+    assertUnpaidPayrollDeletion({ status: batch.status, paid_at: batch.paid_at, paid_by: batch.paid_by, lines });
     // One transaction rechecks and locks payment state, deletes children before parent,
     // and rolls everything back if any lifecycle guard rejects deletion.
     const { data: deleted, error } = await admin.rpc("delete_unpaid_payroll_batch", {
