@@ -8,7 +8,7 @@ import { calculatePayroll, PAYROLL_CALCULATION_VERSION, PAYROLL_POLICY, toNum } 
 import { deleteCachedRows, readCachedRows, writeCachedRows } from "./payroll-cache";
 import { attendanceBelongsToBatch, mergeDraftAllocations } from "./multi-site-payroll";
 import { hasProtectedPayrollPayment } from "./payroll-deletion";
-import { assertPaidBatchIdentityUnchanged, assertPayrollLineEditable, editablePayrollLines, hasLinePayment } from "./payroll-editability";
+import { assertPaidBatchIdentityUnchanged, assertPayrollLineEditable, editableAllocationLineIds, editablePayrollLines, hasLinePayment } from "./payroll-editability";
 import { fetchAllPages } from "./paged-query";
 import { isPayrollAttendanceSnapshot } from "./payroll-attendance-refresh";
 
@@ -240,16 +240,7 @@ export function usePayrollSiteAllocations(month: string, enabled = true) {
       ]);
       const filtered = rows.filter((row) => row.month === month);
       if (filtered.length > 0) {
-        const draftBatchIds = new Set(
-          batches
-            .filter((batch) => batch.month === month && ["DRAFT", "REVIEW"].includes(batch.status))
-            .map((batch) => batch.id),
-        );
-        const draftLineIds = new Set(
-          lines
-            .filter((line) => line.month === month && draftBatchIds.has(line.batch_id))
-            .map((line) => line.id),
-        );
+        const draftLineIds = editableAllocationLineIds(batches, lines, month);
         const resolved = draftLineIds.size
           ? mergeDraftAllocations(filtered, await deriveFallbackAllocations(month), draftLineIds)
           : filtered;

@@ -15,6 +15,16 @@ export function canEditPayrollEmployees(batch: PayrollBatch): boolean {
   return !isPayrollBatchFinalized(batch) && batch.lines.some((line) => !hasLinePayment(line));
 }
 
+/** Cost refresh follows the same line-level protection as the payroll editor. */
+export function editableAllocationLineIds(
+  batches: Array<Pick<PayrollBatch, "id" | "month" | "status" | "paid_at" | "paid_by">>,
+  lines: Array<{ id: string; batch_id: string; month: string; paid: unknown }>,
+  month: string,
+): Set<string> {
+  const editableBatches = new Set(batches.filter((batch) => batch.month === month && ["DRAFT", "REVIEW"].includes(batch.status) && !isPayrollBatchFinalized(batch)).map((batch) => batch.id));
+  return new Set(lines.filter((line) => line.month === month && editableBatches.has(line.batch_id) && !hasLinePayment(line)).map((line) => line.id));
+}
+
 /** Only the stored line decides protection: entering a first payment must remain possible. */
 export function assertPayrollLineEditable(batch: Pick<PayrollBatch, "status" | "paid_at" | "paid_by"> & { lines: Array<Pick<PayrollLine, "id" | "employee_id" | "paid">> }, row: Pick<PayrollLine, "id" | "employee_id">): void {
   const original = batch.lines.find((line) => row.id ? line.id === row.id : Number(line.employee_id) === Number(row.employee_id));

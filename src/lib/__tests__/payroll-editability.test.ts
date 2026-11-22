@@ -1,12 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type { PayrollBatch, PayrollLine } from "../payroll";
-import { assertPaidBatchIdentityUnchanged, assertPayrollLineEditable, canEditPayrollEmployees, editablePayrollLines, hasLinePayment } from "../payroll-editability";
+import { assertPaidBatchIdentityUnchanged, assertPayrollLineEditable, canEditPayrollEmployees, editableAllocationLineIds, editablePayrollLines, hasLinePayment } from "../payroll-editability";
+import { mergeDraftAllocations } from "../multi-site-payroll";
 
 const paid = { id: "paid", employee_id: 1, paid: 163.05, hours: 100, food_deduction: 31, prev_advance: 10 } as PayrollLine;
 const unpaid = { id: "unpaid", employee_id: 2, paid: 0, hours: 80, food_deduction: 31, prev_advance: 20 } as PayrollLine;
 const batch = { id: "batch", month: "2026-10", site: "T-59", foreman: "", status: "DRAFT", lines: [paid, unpaid] } as PayrollBatch;
 
 describe("individual payment protection", () => {
+  it("refreshes only unpaid cost rows in a partially paid draft", () => {
+    const lines = [paid, unpaid].map((line) => ({ id: line.id ?? "", batch_id: batch.id, month: batch.month, paid: line.paid }));
+    const ids = editableAllocationLineIds([batch], lines, batch.month);
+    expect([...ids]).toEqual(["unpaid"]);
+    const saved = [{ payroll_line_id: "paid", hours: 100 }, { payroll_line_id: "unpaid", hours: 80 }];
+    const derived = [{ payroll_line_id: "paid", hours: 999 }, { payroll_line_id: "unpaid", hours: 90 }];
+    expect(mergeDraftAllocations(saved, derived, ids)).toEqual([{ payroll_line_id: "paid", hours: 100 }, { payroll_line_id: "unpaid", hours: 90 }]);
+  });
+  it("does not refresh allocations of a finalized batch", () => {
+    const ids = editableAllocationLineIds([{ ...batch, status: "PAID" }], [{ id: "unpaid", batch_id: batch.id, month: batch.month, paid: 0 }], batch.month);
+    expect(ids.size).toBe(0);
+  });
   it("one paid employee does not freeze the unpaid employee", () => {
     expect(canEditPayrollEmployees(batch)).toBe(true);
     expect(() => assertPayrollLineEditable(batch, unpaid)).not.toThrow();
