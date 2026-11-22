@@ -8,7 +8,7 @@ import { calculatePayroll, PAYROLL_CALCULATION_VERSION, PAYROLL_POLICY, toNum } 
 import { deleteCachedRows, readCachedRows, writeCachedRows } from "./payroll-cache";
 import { attendanceBelongsToBatch, mergeDraftAllocations } from "./multi-site-payroll";
 import { hasProtectedPayrollPayment } from "./payroll-deletion";
-import { assertPaidBatchIdentityUnchanged, assertPayrollLineEditable, editableAllocationLineIds, editablePayrollLines, hasLinePayment } from "./payroll-editability";
+import { assertPaidBatchIdentityUnchanged, assertPayrollLineEditable, assertPayrollStatusTransition, editableAllocationLineIds, editablePayrollLines, hasLinePayment } from "./payroll-editability";
 import { fetchAllPages } from "./paged-query";
 import { isPayrollAttendanceSnapshot } from "./payroll-attendance-refresh";
 
@@ -654,11 +654,17 @@ export function useUpdateBatchStatus() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, status }: { id: string; status: PayrollBatchStatus }) => {
-      await assertBatchHasNoPayments(id);
+      const { data: current, error: currentError } = await supabase.from("payroll_batches").select("*").eq("id", id).single();
+      if (currentError) throw currentError;
+      const lines = await fetchAllPages<PayrollLine>(() =>
+        supabase.from("payroll_lines").select("*").eq("batch_id", id),
+      );
+      assertPayrollStatusTransition({ ...current, lines }, status);
       const { data, error } = await supabase
         .from("payroll_batches")
         .update({ status })
         .eq("id", id)
+        .eq("status", current.status)
         .select("*")
         .single();
       if (error) throw error;

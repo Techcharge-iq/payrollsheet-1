@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PayrollBatch, PayrollLine } from "../payroll";
-import { assertPaidBatchIdentityUnchanged, assertPayrollLineEditable, canEditPayrollEmployees, editableAllocationLineIds, editablePayrollLines, hasLinePayment } from "../payroll-editability";
+import { assertPaidBatchIdentityUnchanged, assertPayrollLineEditable, assertPayrollStatusTransition, canEditPayrollEmployees, editableAllocationLineIds, editablePayrollLines, hasLinePayment } from "../payroll-editability";
+import { canDeleteUnpaidPayroll } from "../payroll-deletion";
 import { mergeDraftAllocations } from "../multi-site-payroll";
 
 const paid = { id: "paid", employee_id: 1, paid: 163.05, hours: 100, food_deduction: 31, prev_advance: 10 } as PayrollLine;
@@ -8,6 +9,29 @@ const unpaid = { id: "unpaid", employee_id: 2, paid: 0, hours: 80, food_deductio
 const batch = { id: "batch", month: "2026-10", site: "T-59", foreman: "", status: "DRAFT", lines: [paid, unpaid] } as PayrollBatch;
 
 describe("individual payment protection", () => {
+  it("allows a partially paid Draft to progress through review and approval without rewriting paid rows", () => {
+    const before = JSON.stringify(batch);
+    expect(() => assertPayrollStatusTransition(batch, "REVIEW")).not.toThrow();
+    expect(() => assertPayrollStatusTransition({ ...batch, status: "REVIEW" }, "APPROVED")).not.toThrow();
+    expect(JSON.stringify(batch)).toBe(before);
+    expect(canDeleteUnpaidPayroll(batch)).toBe(false);
+  });
+  it("does not reopen a payment-bearing Review or finalised batch", () => {
+    expect(() => assertPayrollStatusTransition({ ...batch, status: "REVIEW" }, "DRAFT")).toThrow("only move forward");
+    expect(() => assertPayrollStatusTransition({ ...batch, status: "PAID" }, "DRAFT")).toThrow("Finalised");
+    expect(() => assertPayrollStatusTransition({ ...batch, paid_at: "2026-10-31" }, "REVIEW")).toThrow("Finalised");
+  });
+  it("rejects marking a partly paid salary as Paid and reports the remaining amount", () => {
+    const lines = [{ paid: 40, net_salary: 100 }, { paid: 60, net_salary: 60 }];
+    expect(() => assertPayrollStatusTransition({ ...batch, status: "APPROVED", lines }, "PAID")).toThrow("60.000 OMR remains unpaid");
+  });
+  it("allows Paid only when every employee has been fully paid, not just the batch total", () => {
+    expect(() => assertPayrollStatusTransition({ ...batch, status: "APPROVED", lines: [{ paid: 100, net_salary: 100 }] }, "PAID")).not.toThrow();
+    expect(() => assertPayrollStatusTransition({ ...batch, status: "APPROVED", lines: [{ paid: 200, net_salary: 100 }, { paid: 0, net_salary: 100 }] }, "PAID")).toThrow("100.000 OMR");
+  });
+  it.each([null, undefined, "invalid", -1])("blocks forward status changes with invalid payments %s", (paid) => {
+    expect(() => assertPayrollStatusTransition({ ...batch, lines: [{ paid, net_salary: 100 }] }, "REVIEW")).toThrow("invalid payment");
+  });
   it("refreshes only unpaid cost rows in a partially paid draft", () => {
     const lines = [paid, unpaid].map((line) => ({ id: line.id ?? "", batch_id: batch.id, month: batch.month, paid: line.paid }));
     const ids = editableAllocationLineIds([batch], lines, batch.month);

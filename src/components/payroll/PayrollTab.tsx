@@ -79,7 +79,7 @@ import { NewAdvanceValue } from "./NewAdvanceValue";
 import { dbAny } from "@/integrations/supabase/external-client";
 import { fetchAllPages } from "@/lib/paged-query";
 import { canDeleteUnpaidPayroll, hasProtectedPayrollPayment } from "@/lib/payroll-deletion";
-import { canEditPayrollEmployees, hasLinePayment, isPayrollBatchFinalized } from "@/lib/payroll-editability";
+import { assertPayrollStatusTransition, canTransitionPayrollStatus, canEditPayrollEmployees, hasLinePayment, isPayrollBatchFinalized } from "@/lib/payroll-editability";
 import { assertPayrollDeductionLimits } from "@/lib/payroll-deduction-guard";
 import {
   applySelectedAttendanceDiffs,
@@ -1811,17 +1811,17 @@ export function PayrollTab({
   };
 
   const changeStatus = async (batch: PayrollBatch, status: PayrollBatchStatus) => {
-    if (hasProtectedPayrollPayment(batch)) {
-      notify(
-        "Payroll with recorded payments cannot be changed. Paid records are protected.",
-        "warn",
-      );
+    try {
+      assertPayrollStatusTransition(batch, status);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not change payroll status.", "warn");
       return;
     }
+    const unpaidLines = batch.lines.filter((line) => !hasLinePayment(line));
     if (status === "APPROVED" || status === "PAID") {
       try {
         assertPayrollDeductionLimits(
-          batch.lines.map((line) => ({
+          unpaidLines.map((line) => ({
             ...(line.id ? { id: line.id } : {}),
             batch_id: batch.id,
             employee_id: Number(line.employee_id),
@@ -1852,19 +1852,20 @@ export function PayrollTab({
     }
     if (status === "APPROVED") {
       const otherBatchEmployees = lockedEmployeeIds(batches, batch.month, batch.id, batch.site);
-      const issues = validateBatch(
-        batch,
+      const issues = unpaidLines.length ? validateBatch(
+        { ...batch, lines: unpaidLines },
         batch.month,
         employees,
         (employeeId) => availableAdvance(employeeId, batch.id),
         otherBatchEmployees,
         payrollPolicy,
-      );
+      ) : [];
       if (issues.length) {
         notify(`Payroll reconciliation failed: ${issues.slice(0, 3).join(" ")}`, "warn");
         return;
       }
       const snapshotIssues = batch.lines.flatMap((line, index) => {
+        if (hasLinePayment(line)) return [];
         if (!line.calculation_version) return [];
         const calculation = calculatePayroll({
           regularHours:
@@ -2905,7 +2906,7 @@ export function PayrollTab({
                     <Pencil size={14} /> Edit
                   </button>
                 )}
-              {canDelete && !hasProtectedPayrollPayment(b) && b.status === "DRAFT" && (
+              {canDelete && canTransitionPayrollStatus(b, "REVIEW") && b.status === "DRAFT" && (
                 <button
                   type="button"
                   onClick={() => void changeStatus(b, "REVIEW")}
@@ -2914,8 +2915,9 @@ export function PayrollTab({
                   <CheckCircle2 size={14} /> Submit review
                 </button>
               )}
-              {canDelete && !hasProtectedPayrollPayment(b) && b.status === "REVIEW" && (
+              {canDelete && canTransitionPayrollStatus(b, "APPROVED") && b.status === "REVIEW" && (
                 <>
+                  {canTransitionPayrollStatus(b, "DRAFT") && (
                   <button
                     type="button"
                     onClick={() => void changeStatus(b, "DRAFT")}
@@ -2923,6 +2925,7 @@ export function PayrollTab({
                   >
                     Return to draft
                   </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => void changeStatus(b, "APPROVED")}
@@ -2933,7 +2936,7 @@ export function PayrollTab({
                 </>
               )}
               {canDelete &&
-                !hasProtectedPayrollPayment(b) &&
+                !b.paid_at && !b.paid_by &&
                 ["APPROVED", "LOCKED"].includes(b.status) && (
                   <button
                     type="button"

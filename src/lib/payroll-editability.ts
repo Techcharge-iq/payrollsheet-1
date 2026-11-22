@@ -1,4 +1,42 @@
-import type { PayrollBatch, PayrollLine } from "./payroll";
+import type { PayrollBatch, PayrollBatchStatus, PayrollLine } from "./payroll";
+
+/** Status-only forward transitions never rewrite protected employee rows. */
+export function assertPayrollStatusTransition(
+  batch: Pick<PayrollBatch, "status" | "paid_at" | "paid_by"> & {
+    lines: Array<{ paid: unknown; net_salary: unknown; net_pay?: unknown }>;
+  },
+  target: PayrollBatchStatus,
+): void {
+  if (batch.status === "PAID" || batch.paid_at || batch.paid_by)
+    throw new Error("Finalised payroll cannot be reopened or changed.");
+  const forward = (batch.status === "DRAFT" && target === "REVIEW") ||
+    (batch.status === "REVIEW" && target === "APPROVED") ||
+    (["APPROVED", "LOCKED"].includes(batch.status) && target === "PAID");
+  const returnToDraft = batch.status === "REVIEW" && target === "DRAFT" &&
+    !batch.lines.some(hasLinePayment);
+  if (!forward && !returnToDraft)
+    throw new Error("This payroll status change is not allowed; batches with payments can only move forward.");
+  if (!batch.lines.length) throw new Error("Add employee lines before changing payroll status.");
+  for (const line of batch.lines) {
+    if (line.paid === null || line.paid === undefined || !Number.isFinite(Number(line.paid)) || Number(line.paid) < 0)
+      throw new Error("Payroll has an invalid payment amount; review it before proceeding.");
+  }
+  if (target === "PAID") {
+    let remaining = 0;
+    for (const line of batch.lines) {
+      const net = line.net_pay ?? line.net_salary;
+      if (net === null || net === undefined || !Number.isFinite(Number(net)) || Number(net) < 0)
+        throw new Error("Payroll has an invalid net salary; review it before marking paid.");
+      remaining += Math.max(0, Number(net) - Number(line.paid));
+    }
+    if (remaining > 0.001)
+      throw new Error(`Cannot mark paid: ${remaining.toFixed(3)} OMR remains unpaid. Record the remaining employee payments first.`);
+  }
+}
+
+export function canTransitionPayrollStatus(batch: PayrollBatch, target: PayrollBatchStatus): boolean {
+  try { assertPayrollStatusTransition(batch, target); return true; } catch { return false; }
+}
 
 /** Invalid/missing payment amounts are protected, never treated as unpaid. */
 export function hasLinePayment(line: { paid: unknown }): boolean {
