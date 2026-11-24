@@ -13,6 +13,23 @@ describe("October multi-site save deduction guard", () => {
   it("allows prorated food and one advance deduction at T-59", () => {
     expect(() => assertPayrollDeductionLimits([row], batches, advances, entries, defaults)).not.toThrow();
   });
+  it("does not recover employee 60 advances outside their final active site", () => {
+    const employee60Entries = [
+      { employee_id: 60, site: "Adam", work_date: "2026-10-05", status: "PRESENT" },
+      { employee_id: 60, site: "T-59", work_date: "2026-10-21", status: "HALF_DAY" },
+    ];
+    const employee60Advance = [{ employee_id: 60, date: "2026-09-01", amount: 100 }] as AdvanceTx[];
+    const employee60Row: GuardedPayrollRow = { batch_id: "a", employee_id: 60, food_deduction: 15, prev_advance: 100, new_advance: 0, gross_pay: 200, other_deduction: 0 };
+    expect(() => assertPayrollDeductionLimits([employee60Row], batches, employee60Advance, employee60Entries, new Map([[60, 30]]))).toThrow("last active site");
+  });
+  it("does not recover employee 60 advances without an active attendance site", () => {
+    const employee60Entries = [
+      { employee_id: 60, site: "Adam", work_date: "2026-10-05", status: "ABSENT" },
+    ];
+    const employee60Advance = [{ employee_id: 60, date: "2026-09-01", amount: 100 }] as AdvanceTx[];
+    const employee60Row: GuardedPayrollRow = { batch_id: "a", employee_id: 60, food_deduction: 15, prev_advance: 100, new_advance: 0, gross_pay: 200, other_deduction: 0 };
+    expect(() => assertPayrollDeductionLimits([employee60Row], batches, employee60Advance, employee60Entries, new Map([[60, 30]]))).toThrow("last active site");
+  });
   it("accepts a manually entered food amount above the daily suggestion", () => {
     expect(() => assertPayrollDeductionLimits([{ ...row, food_deduction: 45, prev_advance: 0 }], batches, advances, entries, defaults)).not.toThrow();
   });

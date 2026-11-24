@@ -64,6 +64,11 @@ export const deletePayrollRecord = createServerFn({ method: "POST" })
     if (!batch) throw new Error("The payroll batch was not found or was already deleted.");
     const lines = await fetchAllPages<{ id: string; paid: number }>(() => admin
       .from("payroll_lines").select("id,paid").eq("batch_id", data.id));
+    const transactions = await fetchAllPages<{ id: string }>(() => admin
+      .from("payroll_payment_transactions").select("id").eq("batch_id", data.id));
+    if (transactions.length) {
+      throw new Error("Payroll with recorded payment transactions cannot be deleted. Financial history is protected.");
+    }
     assertUnpaidPayrollDeletion({ status: batch.status, paid_at: batch.paid_at, paid_by: batch.paid_by, lines });
     // One transaction rechecks and locks payment state, deletes children before parent,
     // and rolls everything back if any lifecycle guard rejects deletion.

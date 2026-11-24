@@ -36,7 +36,7 @@ export function assertPayrollDeductionLimits(
     const otherLines = reserved.filter((item) => item.month === batch.month).flatMap((item) => item.lines).filter((line) => Number(line.employee_id) === row.employee_id);
     // Food is suggested at 1 OMR/day during generation, but the entered amount is always accepted (user may deduct more).
     const latestSite = lastActiveSite(monthEntries);
-    if (row.prev_advance > 0 && latestSite && !allSites && !sameSite(latestSite, batch.site)) {
+    if (row.prev_advance > 0 && !allSites && (!latestSite || !sameSite(latestSite, batch.site))) {
       throw new Error(`Employee ${row.employee_id}: recover personal advances only in the last active site's payroll batch.`);
     }
     const opening = advanceCarryForward(row.employee_id, batch.month, batches, advances);
