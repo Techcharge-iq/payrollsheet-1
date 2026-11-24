@@ -8,6 +8,7 @@ export interface PayrollPaymentInput {
   payroll_line_id: string;
   employee_id: number;
   amount: number;
+  expected_paid: number;
   payment_date: string;
   payment_method: "CASH" | "BANK" | "CHEQUE" | "TRANSFER" | "OTHER";
   reference_number?: string;
@@ -18,6 +19,7 @@ const paymentSchema = z.object({
   payroll_line_id: z.string().uuid(),
   employee_id: z.number().int().positive(),
   amount: z.number().positive().max(1000000),
+  expected_paid: z.number().nonnegative().max(1000000),
   payment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   payment_method: z.enum(["CASH", "BANK", "CHEQUE", "TRANSFER", "OTHER"]),
   reference_number: z.string().max(100).optional(),
@@ -46,41 +48,32 @@ export const recordPayrollPayments = createServerFn({ method: "POST" })
       throw new Error("You do not have permission to record payroll payments.");
     }
 
-    const { data: result, error: rpcError } = await authDb.rpc("record_payroll_payments", {
-      p_payments: data.payments,
+    const { data: result, error: rpcError } = await authDb.rpc("adjust_approved_payroll_payments", {
+      p_payments: data.payments.map((p) => ({ ...p, mode: "ADD" })),
       p_idempotency_key: data.idempotencyKey,
     });
     if (rpcError) {
       throw new Error(rpcError.message || "The payment could not be recorded.");
     }
-    return result as { duplicate: boolean; transactions: unknown };
+    return { duplicate: Boolean(result?.duplicate) };
   });
 
-export const reversePayrollPayment = createServerFn({ method: "POST" })
+export const correctApprovedPayrollPayment = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) =>
-    z
-      .object({
-        transactionId: z.string().uuid(),
-        reason: z.string().trim().min(3).max(2000),
-      })
-      .parse(input),
-  )
+  .inputValidator((input: unknown) => z.object({
+    payroll_line_id: z.string().uuid(), employee_id: z.number().int().positive(),
+    amount: z.number().nonnegative().max(1000000), expected_paid: z.number().positive(),
+    reason: z.string().trim().min(3).max(2000), idempotencyKey: z.string().uuid(),
+  }).parse(input))
   .handler(async ({ data, context }) => {
     const authDb = context.supabase as SupabaseClient<any>;
-    const { data: profile, error } = await authDb
-      .from("users")
-      .select("role,is_active")
-      .eq("user_id", context.userId)
-      .maybeSingle();
-    if (error) throw new Error("Could not verify payroll payment permission.");
-    if (!profile?.is_active || !["admin", "hr"].includes(profile.role)) {
-      throw new Error("Only an administrator or payroll accountant can reverse payments.");
-    }
-    const { data: result, error: rpcError } = await authDb.rpc("reverse_payroll_payment", {
-      p_transaction_id: data.transactionId,
-      p_reason: data.reason,
+    const { data: profile, error } = await authDb.from("users").select("role,is_active").eq("user_id", context.userId).maybeSingle();
+    if (error || !profile?.is_active || !["admin", "hr"].includes(profile.role))
+      throw new Error("Only an administrator or payroll accountant can correct payments.");
+    const { data: result, error: rpcError } = await authDb.rpc("adjust_approved_payroll_payments", {
+      p_payments: [{ payroll_line_id: data.payroll_line_id, employee_id: data.employee_id, amount: data.amount, expected_paid: data.expected_paid, mode: "CORRECT", notes: data.reason }],
+      p_idempotency_key: data.idempotencyKey,
     });
-    if (rpcError) throw new Error(rpcError.message || "Could not reverse payment.");
-    return { reversalId: result };
+    if (rpcError) throw new Error(rpcError.message || "Could not correct payment.");
+    return { duplicate: Boolean(result?.duplicate) };
   });
