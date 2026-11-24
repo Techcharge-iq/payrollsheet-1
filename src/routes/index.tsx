@@ -93,6 +93,11 @@ const DeleteOnlyTab = lazy(() =>
     default: module.DeleteOnlyTab,
   })),
 );
+const PayrollPaymentControlTab = lazy(() =>
+  import("@/components/payroll/PayrollPaymentControlTab").then((module) => ({
+    default: module.PayrollPaymentControlTab,
+  })),
+);
 const SiteMap = lazy(() =>
   import("@/components/sites/SiteMap").then((module) => ({
     default: module.SiteMap,
@@ -151,6 +156,7 @@ const TABS = [
   { id: "employees", label: "Employees", icon: Users },
   { id: "workforce", label: "Workforce & Leave", icon: BriefcaseBusiness },
   { id: "payroll", label: "Monthly Payroll", icon: Save },
+  { id: "payment-control", label: "Payroll Payment Control", icon: Banknote },
   { id: "timesheets", label: "Daily Timesheets", icon: Clock3 },
   { id: "attendance", label: "Attendance Report", icon: CalendarDays },
   { id: "sites", label: "GIS Site Map", icon: MapPin },
@@ -309,7 +315,7 @@ function Dashboard({
   const cacheReady = cacheState === "ready";
   const employeesQuery = useEmployees(cacheReady);
   const needsPayrollHistory =
-    ["overview", "history", "slips", "advances", "deletions"].includes(tab) || mode !== null;
+    ["overview", "history", "slips", "advances", "deletions", "payment-control"].includes(tab) || mode !== null;
   const batchesQuery = useBatches(undefined, cacheReady && needsPayrollHistory);
   const saveEmployee = useSaveEmployee();
   const canDelete = role === "admin";
@@ -353,6 +359,7 @@ function Dashboard({
         "overview",
         "workforce",
         "payroll",
+        "payment-control",
         "timesheets",
         "attendance",
         "sites",
@@ -879,6 +886,14 @@ function Dashboard({
                     onError: (e) => notify((e as Error).message, "warn"),
                   })
                 }
+              />
+            )}
+
+            {tab === "payment-control" && (
+              <PayrollPaymentControlTab
+                employees={employees}
+                role={role}
+                notify={notify}
               />
             )}
 
