@@ -21,17 +21,7 @@ export function assertPayrollStatusTransition(
     if (line.paid === null || line.paid === undefined || !Number.isFinite(Number(line.paid)) || Number(line.paid) < 0)
       throw new Error("Payroll has an invalid payment amount; review it before proceeding.");
   }
-  if (target === "PAID") {
-    let remaining = 0;
-    for (const line of batch.lines) {
-      const net = line.net_pay ?? line.net_salary;
-      if (net === null || net === undefined || !Number.isFinite(Number(net)) || Number(net) < 0)
-        throw new Error("Payroll has an invalid net salary; review it before marking paid.");
-      remaining += Math.max(0, Number(net) - Number(line.paid));
-    }
-    if (remaining > 0.001)
-      throw new Error(`Cannot mark paid: ${remaining.toFixed(3)} OMR remains unpaid. Record the remaining employee payments first.`);
-  }
+  // Mark paid finalises the batch; it must not require editing protected partial payments.
 }
 
 export function canTransitionPayrollStatus(batch: PayrollBatch, target: PayrollBatchStatus): boolean {

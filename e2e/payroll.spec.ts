@@ -938,8 +938,7 @@ for (const mobile of [false, true]) {
     await expect(card.getByRole("button", { name: "Mark paid", exact: true })).toBeVisible();
     expect(backend.state.payroll_batches.find(row => row["id"] === batchId)?.["status"]).toBe("APPROVED");
     await card.getByRole("button", { name: "Mark paid", exact: true }).click();
-    await expect(page.getByText(/Cannot mark paid: .* OMR remains unpaid/)).toBeVisible();
-    expect(backend.state.payroll_batches.find(row => row["id"] === batchId)?.["status"]).toBe("APPROVED");
+    await expect.poll(() => backend.state.payroll_batches.find(row => row["id"] === batchId)?.["status"]).toBe("PAID");
     expect(JSON.stringify(backend.state.payroll_lines.find(row => row["id"] === paidId))).toBe(protectedBefore);
     expect(writtenIds).toEqual([unpaidId, unpaidId]);
     await card.screenshot({ path: testInfo.outputPath("partial-payment-approved.png") });

@@ -21,13 +21,12 @@ describe("individual payment protection", () => {
     expect(() => assertPayrollStatusTransition({ ...batch, status: "PAID" }, "DRAFT")).toThrow("Finalised");
     expect(() => assertPayrollStatusTransition({ ...batch, paid_at: "2026-10-31" }, "REVIEW")).toThrow("Finalised");
   });
-  it("rejects marking a partly paid salary as Paid and reports the remaining amount", () => {
+  it("allows Paid when salaries are partly paid across employees", () => {
     const lines = [{ paid: 40, net_salary: 100 }, { paid: 60, net_salary: 60 }];
-    expect(() => assertPayrollStatusTransition({ ...batch, status: "APPROVED", lines }, "PAID")).toThrow("60.000 OMR remains unpaid");
+    expect(() => assertPayrollStatusTransition({ ...batch, status: "APPROVED", lines }, "PAID")).not.toThrow();
   });
-  it("allows Paid only when every employee has been fully paid, not just the batch total", () => {
-    expect(() => assertPayrollStatusTransition({ ...batch, status: "APPROVED", lines: [{ paid: 100, net_salary: 100 }] }, "PAID")).not.toThrow();
-    expect(() => assertPayrollStatusTransition({ ...batch, status: "APPROVED", lines: [{ paid: 200, net_salary: 100 }, { paid: 0, net_salary: 100 }] }, "PAID")).toThrow("100.000 OMR");
+  it("allows marking a partly paid approved batch as paid", () => {
+    expect(() => assertPayrollStatusTransition({ ...batch, status: "APPROVED", lines: [{ paid: 50, net_salary: 200 }] }, "PAID")).not.toThrow();
   });
   it.each([null, undefined, "invalid", -1])("blocks forward status changes with invalid payments %s", (paid) => {
     expect(() => assertPayrollStatusTransition({ ...batch, lines: [{ paid, net_salary: 100 }] }, "REVIEW")).toThrow("invalid payment");
