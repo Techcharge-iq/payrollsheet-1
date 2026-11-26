@@ -41,3 +41,22 @@ describe("payroll payment allocation", () => {
     ).toBe("NO_PAYMENT_DUE");
   });
 });
+
+describe("approved payment adjustments", async () => {
+  const { employeeMonthBalances, missingPayrollSites, validateApprovedPaymentAdjustment } = await import("../payroll-payment");
+  const partial = { payrollLineId: "a", employeeId: 1, netPayable: 200, paid: 50, batchStatus: "APPROVED" };
+  it("tops up only the remaining balance", () => {
+    expect(validateApprovedPaymentAdjustment(partial, 150, "ADD")).toBeNull();
+    expect(validateApprovedPaymentAdjustment(partial, 151, "ADD")).not.toBeNull();
+  });
+  it("requires a reason to correct a partial payment and protects fully paid records", () => {
+    expect(validateApprovedPaymentAdjustment(partial, 40, "CORRECT", "")).not.toBeNull();
+    expect(validateApprovedPaymentAdjustment(partial, 40, "CORRECT", "Typing error")).toBeNull();
+    expect(validateApprovedPaymentAdjustment({ ...partial, paid: 200 }, 10, "CORRECT", "Typing error")).not.toBeNull();
+  });
+  it("finds other unpaid sites and attendance sites with no payroll", () => {
+    const rows = [{ ...partial, month: "2026-10", siteName: "T-57", siteId: "s1" }, { ...partial, payrollLineId: "b", paid: 0, month: "2026-10", siteName: "T-59", siteId: "s2" }];
+    expect(employeeMonthBalances(rows, 1, "2026-10").map((r) => r.siteName)).toEqual(["T-57", "T-59"]);
+    expect(missingPayrollSites(rows, [{ employee_id: 1, work_date: "2026-10-20", site: "Adam", project_id: "s3", regular_hours: 8 }], 1, "2026-10")).toEqual(["Adam"]);
+  });
+});

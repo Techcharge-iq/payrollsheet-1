@@ -3,11 +3,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Banknote, Download, Printer, Search, ShieldCheck } from "lucide-react";
 import { dbAny } from "@/integrations/supabase/external-client";
 import { fetchAllPages } from "@/lib/paged-query";
-import { recordPayrollPayments, reversePayrollPayment } from "@/lib/payroll-payment.functions";
+import { correctApprovedPayrollPayment, recordPayrollPayments } from "@/lib/payroll-payment.functions";
 import {
   allocationPaymentStatus,
+  employeeMonthBalances,
+  missingPayrollSites,
   remainingAllocationBalance,
-  validatePaymentAmount,
+  validateApprovedPaymentAdjustment,
 } from "@/lib/payroll-payment";
 import { btnGold, btnOutline, btnPrimary, card, input, select } from "./ui";
 import type { Employee } from "@/lib/payroll";
@@ -20,6 +22,7 @@ interface Props {
 
 interface Allocation {
   lineId: string;
+  payrollLineId: string;
   batchId: string;
   employeeId: number;
   month: string;
@@ -71,7 +74,7 @@ export function PayrollPaymentControlTab({ employees, role, notify }: Props) {
   const dataQuery = useQuery({
     queryKey: ["payroll-payment-control"],
     queryFn: async () => {
-      const [batches, lines, transactions, projects] = await Promise.all([
+      const [batches, lines, transactions, projects, attendance] = await Promise.all([
         fetchAllPages<any>(
           () =>
             dbAny
@@ -102,6 +105,10 @@ export function PayrollPaymentControlTab({ employees, role, notify }: Props) {
           () => dbAny.from("projects").select("id,name").order("name", { ascending: true }),
           "id",
         ),
+        fetchAllPages<any>(
+          () => dbAny.from("timesheets").select("id,employee_id,work_date,site,project_id,regular_hours").order("id", { ascending: true }),
+          "id",
+        ),
       ]);
       const batchMap = new Map(batches.map((batch: any) => [batch.id, batch]));
       const allocations: Allocation[] = lines.map((line: any) => {
@@ -109,6 +116,7 @@ export function PayrollPaymentControlTab({ employees, role, notify }: Props) {
         const net = Number(line.net_pay ?? line.net_salary ?? 0);
         return {
           lineId: line.id,
+          payrollLineId: line.id,
           batchId: line.batch_id,
           employeeId: Number(line.employee_id),
           month: String(line.month ?? batch.month ?? ""),
@@ -117,11 +125,11 @@ export function PayrollPaymentControlTab({ employees, role, notify }: Props) {
           foreman: String(line.foreman ?? batch.foreman ?? ""),
           foremanId: line.foreman_user_id ?? batch.foreman_user_id ?? null,
           netPayable: net,
-          paid: Number(line.paid ?? 0),
+          paid: line.paid === null || line.paid === undefined ? Number.NaN : Number(line.paid),
           batchStatus: String(batch.status ?? ""),
         };
       });
-      return { allocations, transactions, projects };
+      return { allocations, transactions, projects, attendance };
     },
     staleTime: 30_000,
   });
@@ -129,6 +137,8 @@ export function PayrollPaymentControlTab({ employees, role, notify }: Props) {
   const allocations = dataQuery.data?.allocations ?? [];
   const transactions = dataQuery.data?.transactions ?? [];
   const projects = dataQuery.data?.projects ?? [];
+  const attendance = dataQuery.data?.attendance ?? [];
+  const [confirmedSites, setConfirmedSites] = useState(false);
   const months = useMemo(
     () => [...new Set(allocations.map((a) => a.month).filter(Boolean))].sort().reverse(),
     [allocations],
@@ -182,12 +192,18 @@ export function PayrollPaymentControlTab({ employees, role, notify }: Props) {
         .map(([lineId, amount]) => {
           const allocation = allocations.find((a) => a.lineId === lineId);
           if (!allocation) throw new Error("The payroll allocation could not be found.");
-          const error = validatePaymentAmount(allocation, Number(amount));
+          const error = validateApprovedPaymentAdjustment(allocation, Number(amount), "ADD");
           if (error) throw new Error(error);
+          const otherSites = employeeMonthBalances(allocations, allocation.employeeId, allocation.month).filter((a) => a.lineId !== lineId && !selected[a.lineId]);
+          const missing = missingPayrollSites(allocations, attendance, allocation.employeeId, allocation.month);
+          if ((otherSites.length || missing.length) && !confirmedSites) {
+            throw new Error(`Employee ${allocation.employeeId} also has ${[...otherSites.map((a) => `${a.siteName} balance ${fmt(remainingAllocationBalance(a))}`), ...missing.map((s) => `${s} without payroll`)].join(", ")}. Review all sites, then tick the confirmation.`);
+          }
           return {
             payroll_line_id: lineId,
             employee_id: allocation.employeeId,
             amount: Number(amount),
+            expected_paid: allocation.paid,
             payment_date: paymentDate,
             payment_method: paymentMethod,
             ...(reference.trim() ? { reference_number: reference.trim() } : {}),
@@ -209,24 +225,29 @@ export function PayrollPaymentControlTab({ employees, role, notify }: Props) {
           : "Payments recorded securely.",
       );
       setSelected({});
+      setConfirmedSites(false);
       void queryClient.invalidateQueries({ queryKey: ["payroll-payment-control"] });
     },
     onError: (error) =>
       notify(error instanceof Error ? error.message : "Could not record payments.", "warn"),
   });
 
-  const reversePayment = useMutation({
-    mutationFn: (tx: PaymentTx) => {
-      const reason = window.prompt("Enter a reason for reversing this payment:");
-      if (!reason?.trim()) throw new Error("A reversal reason is required.");
-      return reversePayrollPayment({ data: { transactionId: tx.id, reason: reason.trim() } });
+  const correctPayment = useMutation({
+    mutationFn: (a: Allocation) => {
+      const value = window.prompt(`Correct total paid for ${a.siteName} (${fmt(a.paid)} now, net ${fmt(a.netPayable)}):`, String(a.paid));
+      if (value === null) throw new Error("Correction cancelled.");
+      const reason = window.prompt("Reason for correction (kept in payment history):") ?? "";
+      const amount = Number(value);
+      const error = validateApprovedPaymentAdjustment(a, amount, "CORRECT", reason);
+      if (error) throw new Error(error);
+      return correctApprovedPayrollPayment({ data: { payroll_line_id: a.lineId, employee_id: a.employeeId, amount, expected_paid: a.paid, reason: reason.trim(), idempotencyKey: crypto.randomUUID() } });
     },
     onSuccess: () => {
-      notify("Payment reversed with audit history preserved.");
+      notify("Payment corrected; original history preserved.");
       void queryClient.invalidateQueries({ queryKey: ["payroll-payment-control"] });
     },
     onError: (error) =>
-      notify(error instanceof Error ? error.message : "Could not reverse payment.", "warn"),
+      notify(error instanceof Error ? error.message : "Could not correct payment.", "warn"),
   });
 
   const exportCsv = (rows: Array<Record<string, string | number>>) => {
@@ -264,15 +285,23 @@ export function PayrollPaymentControlTab({ employees, role, notify }: Props) {
   };
 
   const outstandingAllocations = (mode === "employee" && !selectedEmployee ? [] : filtered).filter(
-    (a) => remainingAllocationBalance(a) > 0.0005,
+    (a) => a.batchStatus === "APPROVED" && remainingAllocationBalance(a) > 0.0005,
   );
+  const siteWarnings = [...new Set(Object.keys(selected).map((id) => allocations.find((a) => a.lineId === id)).filter(Boolean).map((a) => `${a!.employeeId}|${a!.month}`))].flatMap((key) => {
+    const [id, m] = key.split("|");
+    const employeeId = Number(id); const month = m ?? "";
+    const open = employeeMonthBalances(allocations, employeeId, month).filter((a) => !selected[a.lineId]);
+    const missing = missingPayrollSites(allocations, attendance, employeeId, month);
+    const name = employees.find((e) => e.id === employeeId)?.name ?? employeeId;
+    return open.length || missing.length ? [`${name}: ${[...open.map((a) => `${a.siteName} unpaid ${fmt(remainingAllocationBalance(a))}`), ...missing.map((s) => `${s} has attendance but no payroll`)].join("; ")}`] : [];
+  });
   const employeeMatches = employeeQuery.trim()
     ? employees.filter(
         (e) =>
           e.name.toLowerCase().includes(employeeQuery.toLowerCase()) ||
           e.trade.toLowerCase().includes(employeeQuery.toLowerCase()) ||
           String(e.id).includes(employeeQuery) ||
-          String(e.id_number).toLowerCase().includes(employeeQuery.toLower()),
+          String(e.id_number).toLowerCase().includes(employeeQuery.toLowerCase()),
       )
     : employees;
 
@@ -433,6 +462,9 @@ export function PayrollPaymentControlTab({ employees, role, notify }: Props) {
                       <td className="text-right">{fmt(a.paid)}</td>
                       <td className="text-right font-bold">{fmt(balance)}</td>
                       <td className="py-2 text-right">
+                        {a.paid > 0 && ["admin", "hr"].includes(role) && (
+                          <button type="button" className={`${btnOutline} mr-2`} onClick={() => correctPayment.mutate(a)}>Correct</button>
+                        )}
                         <input
                           aria-label={`Payment amount for ${employee?.name ?? a.employeeId}`}
                           className={`${input} ml-auto w-28 text-right`}
@@ -501,10 +533,20 @@ export function PayrollPaymentControlTab({ employees, role, notify }: Props) {
               onChange={(e) => setNotes(e.target.value)}
             />
           </div>
+          {siteWarnings.length > 0 && (
+            <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              <p className="font-bold">Other sites need attention for this employee</p>
+              {siteWarnings.map((w) => <p key={w}>{w}</p>)}
+              <label className="mt-2 flex items-center gap-2 font-semibold">
+                <input type="checkbox" checked={confirmedSites} onChange={(e) => setConfirmedSites(e.target.checked)} />
+                I reviewed every site and want to save only this payment
+              </label>
+            </div>
+          )}
           <div className="flex justify-end">
             <button
               type="button"
-              disabled={savePayments.isPending || Object.keys(selected).length === 0}
+              disabled={savePayments.isPending || Object.keys(selected).length === 0 || (siteWarnings.length > 0 && !confirmedSites)}
               className={btnPrimary}
               onClick={() => savePayments.mutate()}
             >
@@ -550,15 +592,7 @@ export function PayrollPaymentControlTab({ employees, role, notify }: Props) {
                       <td className="text-right font-bold">{fmt(Number(tx.amount))}</td>
                       <td>{tx.transaction_status}</td>
                       <td>
-                        {["admin", "hr"].includes(role) && tx.transaction_status === "COMPLETED" ? (
-                          <button
-                            type="button"
-                            className={btnOutline}
-                            onClick={() => reversePayment.mutate(tx)}
-                          >
-                            Reverse
-                          </button>
-                        ) : null}
+                        {tx.transaction_status === "REVERSED" ? "Corrected" : null}
                       </td>
                     </tr>
                   );
